@@ -43,7 +43,11 @@
     - role: cgl_box
       vars:
         runtime_uid: "{{ runtime_user_info.uid }}"
+    # Only where there is a branch to follow. Production names a release
+    # deliberately, so it gets no trigger endpoint and no convergence timer —
+    # nothing reaches it unless somebody ran ./deploy.sh, which is the point.
     - role: webhook
+      when: track_branch is defined
       vars:
         runtime_uid: "{{ runtime_user_info.uid }}"
 
