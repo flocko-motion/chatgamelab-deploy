@@ -10,13 +10,16 @@
 # with its data intact, which a destroy-first ordering would not.
 . "$(dirname "$0")/lib.sh"
 
-deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""; force_rebuild=0; image_tag=""
+deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""; force_rebuild=0; image_tag=""; restore_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --force-rebuild)    force_rebuild=1 ;;
     # The registry tag, on a pulling instance. Absent on a building one, where
     # the images are tagged by commit and the sha is the tag.
     --image-tag)        shift; image_tag="${1:-}" ;;
+    # A dump to load in place of whatever is here. ./deploy.sh puts the file on
+    # the box and passes its path.
+    --restore)          shift; restore_file="${1:-}" ;;
     --deploy-sha)       shift; deploy_sha="${1:-}" ;;
     --app-sha)          shift; app_sha="${1:-}" ;;
     --target-migration) shift; target_migration="${1:-}" ;;
@@ -158,6 +161,68 @@ else
       "  ./deploy.sh $DOMAIN <commit> --reset-db <your-address>" \
       "" \
       "Nothing has been changed; the box serves what it served before."
+fi
+
+# --------------------------------------------------------------- restoring
+
+# Loading a dump has to happen with the database up and the backend down, and
+# that ordering is the whole difficulty. db.Init counts base tables
+# (server/db/init.go:143): against an empty database the backend writes
+# schema.sql and stamps the version at its own highest migration, and a dump
+# restored afterwards collides with every table it just created. Started after
+# the restore instead, it finds a populated database and runs only the
+# migrations the dump predates — so a dump from an older release is carried
+# forward on first start, which is exactly what a migration between hosts wants.
+if [ -n "$restore_file" ]; then
+  [ -r "$restore_file" ] || die "cannot read $restore_file on the box."
+  step "restoring the database"
+  say "$(du -h "$restore_file" | cut -f1) from $restore_file"
+  say "everything currently in the database goes"
+
+  compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+
+  # Only postgres, so nothing writes a schema underneath the dump. initdb runs
+  # on the fresh volume and creates the empty database the dump loads into.
+  IMAGE_TAG="$image_tag" compose up --detach db 2>&1 | sed 's/^/   /'
+  for _ in $(seq 1 60); do
+    IMAGE_TAG="$image_tag" compose ps --status running --services 2>/dev/null | grep -qx db \
+      && compose exec -T -e PGPASSWORD="$(secret_get DB_PASSWORD)" db \
+           psql -U chatgamelab -d chatgamelab -c 'select 1' >/dev/null 2>&1 && break
+    sleep 2
+  done
+
+  case "$restore_file" in
+    *.gz) decompress="gunzip -c" ;;
+    *)    decompress="cat" ;;
+  esac
+  if ! $decompress "$restore_file" | compose exec -T \
+       -e PGPASSWORD="$(secret_get DB_PASSWORD)" db \
+       psql -v ON_ERROR_STOP=1 -U chatgamelab -d chatgamelab >/dev/null; then
+    echo >&2
+    compose logs --tail=20 db 2>&1 | sed 's/^/   /' >&2
+    die "" "The dump did not load. The database is left as the restore found it," \
+           "which is empty — nothing of the old contents was kept, so re-run" \
+           "with a dump that loads."
+  fi
+
+  restored="$(compose exec -T -e PGPASSWORD="$(secret_get DB_PASSWORD)" db \
+    psql -U chatgamelab -d chatgamelab -tAc \
+    "SELECT schema_version FROM system_settings WHERE id = '00000000-0000-0000-0000-000000000001'::uuid" \
+    2>/dev/null | tr -d '[:space:]' || true)"
+  say "loaded — the dump carries schema version ${restored:-unknown}"
+
+  # The same asymmetry as above, asked of the dump rather than of what was
+  # already running: this release must be able to carry the dump forward.
+  if [ -n "$restored" ] && [ "$target_migration" -lt "$restored" ]; then
+    die "The dump is at migration $restored and this release only reaches $target_migration." \
+        "" \
+        "Migrations run forwards only, so this code would query a schema newer" \
+        "than it knows — and the set in between contains DROP COLUMN and RENAME" \
+        "COLUMN, which fails at query time rather than at startup." \
+        "" \
+        "Deploy a release at or above $restored instead."
+  fi
+  rm -f "$restore_file"
 fi
 
 # -------------------------------------------------------------- resetting

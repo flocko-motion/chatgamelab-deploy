@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
+#                             [--restore <dump.sql.gz>]
 #
 # Deploys one commit of chatgamelab to one v-server. <commit> is anything git
 # can resolve — a branch, a tag, a short or full SHA — and it is resolved here,
@@ -34,6 +35,7 @@ die() { printf '%s\n' "$@" >&2; exit 1; }
 usage() {
   cat >&2 <<'USAGE'
 usage: ./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
+                   [--restore <dump.sql.gz>]
 
   <server>   the domain of an instance (e.g. cgl.fmnoel.de), which is also
              its ansible/host_vars/<server>.yml and its inventory line
@@ -42,6 +44,9 @@ usage: ./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild
   --force-rebuild
              build the images again even though this commit has been built
              here before — for when the recipe moved rather than the source
+  --restore <dump.sql.gz>
+             replace the database with a dump, loading it before the backend
+             starts so its own migrations carry it forward
 
 examples:
   ./deploy.sh cgl.fmnoel.de development
@@ -106,7 +111,7 @@ require_tools
 
 # ---------------------------------------------------------------- arguments
 
-server=""; commit=""; reset_db=0; admin_email=""; force_rebuild=0
+server=""; commit=""; reset_db=0; admin_email=""; force_rebuild=0; restore_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --reset-db)
@@ -115,6 +120,11 @@ while [ $# -gt 0 ]; do
       admin_email="$1"; reset_db=1
       ;;
     --force-rebuild) force_rebuild=1 ;;
+    --restore)
+      shift
+      [ $# -gt 0 ] || die "--restore needs the dump to load."
+      restore_file="$1"
+      ;;
     -h|--help) usage ;;
     -*) die "Unknown option: $1" "" "$(usage 2>&1)" ;;
     *)
@@ -127,6 +137,25 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$server" ] && [ -n "$commit" ] || usage
+
+# One empties the database and names who gets into what replaces it; the other
+# brings a database that already has its own admins. Asking for both says two
+# incompatible things about the same volume.
+if [ "$reset_db" -eq 1 ] && [ -n "$restore_file" ]; then
+  die "--reset-db and --restore both replace the database, differently." \
+      "" \
+      "A restored dump carries its own accounts, so it needs no bootstrap" \
+      "address. Drop --reset-db."
+fi
+
+if [ -n "$restore_file" ]; then
+  [ -r "$restore_file" ] || die "cannot read $restore_file"
+  case "$restore_file" in
+    *.gz)
+      gzip -t "$restore_file" 2>/dev/null || die "$restore_file is named .gz and does not decompress."
+      ;;
+  esac
+fi
 
 # Checked here because a typo costs the database: --reset-db destroys it and
 # this address is the only way back into what replaces it.
@@ -606,6 +635,17 @@ if [ -n "$image_tag" ]; then
   done
 fi
 
+remote_restore=""
+if [ -n "$restore_file" ]; then
+  remote_restore="/var/tmp/cgl-restore-$$.$(basename "$restore_file")"
+  echo ">> sending the dump ($(du -h "$restore_file" | cut -f1))"
+  # Landed rather than streamed straight into psql: a transfer that fails
+  # part-way then costs the transfer again rather than the database, and phase
+  # two can check the file before it drops anything.
+  ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$remote_restore'" < "$restore_file" \
+    || die "could not send the dump to the box."
+fi
+
 echo ">> phase two on the box"
 set -- "$deploy_clone_remote/box/cgl-deploy" \
   --deploy-sha "$self_sha" \
@@ -614,6 +654,7 @@ set -- "$deploy_clone_remote/box/cgl-deploy" \
 [ "$reset_db" -eq 1 ] && set -- "$@" --reset-db "$admin_email"
 [ "$force_rebuild" -eq 1 ] && set -- "$@" --force-rebuild
 [ -n "$image_tag" ] && set -- "$@" --image-tag "$image_tag"
+[ -n "$remote_restore" ] && set -- "$@" --restore "$remote_restore"
 
 # -t so the box's progress arrives as it happens rather than in one lump at the
 # end: a build is minutes long and watching it is the point.

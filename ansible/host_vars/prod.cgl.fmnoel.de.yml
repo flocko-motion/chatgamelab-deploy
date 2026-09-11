@@ -8,21 +8,28 @@
 # this instance rather than to the development one: its own Auth0 account, its
 # own audience, its own contact address. Nothing is shared between the two, so
 # handing this over needs no rotation anywhere else.
-certbot_email: PUT_THE_PROD_CONTACT_ADDRESS_HERE
+certbot_email: webmaster@omnitopos.net
 
-# Production's own Auth0 account — deliberately not the development tenant, so
-# an account that changes hands takes nothing of the other with it. A Single
-# Page Application (public client, PKCE: the backend holds no secret and
-# verifies against the published JWKS), plus an API whose identifier is the
-# audience, signing RS256.
+# The tenant production already uses, and deliberately not a new one.
+#
+# app_user.auth0_id holds a tenant-scoped subject, and the middleware looks a
+# user up by it alone (server/api/httpx/auth.go:332) with no fallback to email
+# — so a restored database can only be signed into from the tenant its users
+# came from. Pointing this instance anywhere else would lock out everyone in
+# the dump, which would make a rehearsal prove nothing.
+#
+# That application's allowed URL lists need this origin adding alongside the
+# live one. Moving production to an account of its own is a separate exercise
+# with the same consequence, and wants doing deliberately rather than as a side
+# effect of changing hosts.
 #
 #   Allowed Callback URLs   https://prod.cgl.fmnoel.de/auth/login/auth0/callback
 #   Allowed Logout URLs     https://prod.cgl.fmnoel.de/auth/logout/auth0/callback
 #   Allowed Web Origins     https://prod.cgl.fmnoel.de
 #
-# Under Application Access Policy, User-delegated Access is the one to
-# authorize; Client Access stays unauthorized, since nothing here does
-# machine-to-machine.
+# This host is a rehearsal: run.chatgamelab.eu is where production lands, and
+# that is a second host_vars file rather than a rename — a different
+# certificate, vhost and callback list against the same box.
 auth0_domain: PUT_THE_PROD_TENANT_DOMAIN_HERE
 auth0_audience: PUT_THE_PROD_API_IDENTIFIER_HERE
 auth0_client_id: PUT_THE_PROD_SPA_CLIENT_ID_HERE
