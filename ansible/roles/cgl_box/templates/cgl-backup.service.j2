@@ -11,6 +11,13 @@ Type=oneshot
 User={{ runtime_user }}
 Group={{ runtime_user }}
 Environment=XDG_RUNTIME_DIR=/run/user/{{ runtime_uid }}
-ExecStart=/usr/bin/podman exec chatgamelab-db /usr/local/bin/backup.sh
-# A media-heavy dump over SFTP is slow; generous rather than unbounded.
+# Through box/cgl-backup rather than straight at the container, so the nightly
+# run and a hand-run are the same path — and so the destination is probed
+# before a dump is taken. backup.sh calls sftp without BatchMode, so an
+# unusable key makes it hang rather than fail, and a generous timeout would
+# turn that into hours of nothing.
+ExecStart={{ deploy_clone }}/box/cgl-backup now
+
+# Enough for a media-heavy dump to upload, now that a dead destination is
+# caught in seconds rather than consuming this.
 TimeoutStartSec=2h
