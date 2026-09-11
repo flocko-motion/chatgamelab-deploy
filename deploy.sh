@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
+# ./deploy.sh <server> [commit] [--reset-db <admin-email>] [--force-rebuild]
 #                             [--restore <dump.sql.gz>]
 #
 # Deploys one commit of chatgamelab to one v-server. <commit> is anything git
@@ -34,12 +34,13 @@ die() { printf '%s\n' "$@" >&2; exit 1; }
 
 usage() {
   cat >&2 <<'USAGE'
-usage: ./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
+usage: ./deploy.sh <server> [commit] [--reset-db <admin-email>] [--force-rebuild]
                    [--restore <dump.sql.gz>]
 
   <server>   the domain of an instance (e.g. cgl.fmnoel.de), which is also
              its ansible/host_vars/<server>.yml and its inventory line
-  <commit>   a branch, tag, or commit SHA in the chatgamelab repository
+  [commit]   a branch, tag, or commit SHA in the chatgamelab repository.
+             Omitted, the instance's own default_ref is used
   --reset-db destroys the database and makes <admin-email> its first admin
   --force-rebuild
              build the images again even though this commit has been built
@@ -139,7 +140,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$server" ] && [ -n "$commit" ] || usage
+[ -n "$server" ] || usage
 
 # One empties the database and names who gets into what replaces it; the other
 # brings a database that already has its own admins. Asking for both says two
@@ -226,6 +227,15 @@ for key in auth0_domain auth0_audience auth0_client_id; do
       ;;
   esac
 done
+
+# Each instance says what it deploys when nothing is named, so the common case
+# is `./deploy.sh <server>` and naming a commit is the deliberate act.
+if [ -z "$commit" ]; then
+  commit="$(yaml_get default_ref "$vars_file")"
+  [ -n "$commit" ] \
+    || die "No commit given, and ansible/host_vars/$server.yml sets no default_ref."
+  echo ">> no commit named — using this instance's default_ref: $commit"
+fi
 
 all_vars="$repo_root/ansible/group_vars/all.yml"
 app_repo="$(yaml_get app_repo "$all_vars")"

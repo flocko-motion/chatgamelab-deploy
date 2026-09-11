@@ -64,6 +64,10 @@ image_source: build
 # and the preseeded dev accounts.
 dev_mode: true
 
+# What ./deploy.sh deploys when no commit is named. The same branch the box
+# converges on by itself, so a hand-run and a tick agree.
+default_ref: development
+
 # The branch this box follows when nobody is driving. Every merge to it is
 # built and deployed, by the trigger if CI reaches the box and by the timer
 # otherwise. ./deploy.sh <commit> overrides it until the next tick.
