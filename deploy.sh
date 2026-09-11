@@ -536,6 +536,88 @@ if [ "$setup_needed" -eq 1 ] || [ "${FORCE_SETUP:-0}" = "1" ]; then
   ssh_works "$runtime_user" || die "Ground setup finished and $runtime_user@$host still refuses the key."
 fi
 
+# ------------------------------------------------------- the box's own copy
+
+# Brought up to date here, before anything runs out of it. Everything below
+# invokes a script from that clone — the backup check, phase two — so updating
+# it later means those run the previous commit's code, which is how a fix to
+# box/ appeared to have no effect at all.
+#
+# The box runs its own copy of this repository, so it can redeploy with no
+# laptop in the loop and both the manual and the automatic path execute the
+# same code. Which copy is decided here: the commit you are running from. That
+# makes "the phase two that runs" the phase two you are looking at — provided
+# you pushed it, which is checked rather than assumed.
+self_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+[ -n "$self_sha" ] || die "$repo_root is not a git repository, so there is no phase two for the box to check out."
+git -C "$repo_root" fetch --quiet origin 2>/dev/null || true
+if ! git -C "$repo_root" for-each-ref --contains "$self_sha" --count=1 refs/remotes/origin | grep -q .; then
+  die "The commit you are deploying from ($(git -C "$repo_root" rev-parse --short HEAD)) is not on origin," \
+      "and the box checks this repository out from there." \
+      "" \
+      "  git push" \
+      "" \
+      "Phase two lives on the box deliberately, which is what makes a push the" \
+      "price of changing it."
+fi
+if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --quiet; then
+  echo "   note: your working tree has uncommitted changes, and the box will run $(git -C "$repo_root" rev-parse --short HEAD)"
+fi
+
+# Brought to that commit from here, rather than by the script inside it: a bug
+# in a self-checkout cannot be fixed by the checkout it broke, and a box wedged
+# that way needed someone to log in and clean up before anything could deploy
+# again. Done from this side, the next deploy repairs it.
+#
+# reset --hard because the clone is machine-managed and nobody edits it, so
+# local drift is to be discarded rather than protected.
+echo ">> bringing the box's clone to $(git -C "$repo_root" rev-parse --short HEAD)"
+ssh $ssh_opts "$runtime_user@$host" \
+  "git -C '$deploy_clone_remote' fetch --quiet origin \
+   && git -C '$deploy_clone_remote' reset --quiet --hard '$self_sha'" \
+  || die "Could not bring $deploy_clone_remote to $self_sha." \
+         "" \
+         "If the clone is missing entirely, re-run with FORCE_SETUP=1 to make" \
+         "ground setup recreate it."
+
+# Checked from here, where the answer can name the release and the workflow,
+# rather than as a pull failure on the box. Anonymous, because the packages are
+# public — which is also why the box needs no registry credential.
+if [ -n "$image_tag" ]; then
+  echo ">> checking the registry holds $image_tag"
+  registry_host="${image_registry%%/*}"
+  registry_path="${image_registry#*/}"
+  for image in db backend web; do
+    repo="$registry_path/chatgamelab-$image"
+    token="$(curl -fsS "https://$registry_host/token?scope=repository:$repo:pull&service=$registry_host" \
+      | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    code="$(curl -sS -o /dev/null -w '%{http_code}' \
+      -H "Authorization: Bearer $token" \
+      -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "https://$registry_host/v2/$repo/manifests/$image_tag")"
+    case "$code" in
+      200) echo "   chatgamelab-$image:$image_tag — present" ;;
+      *)   die "   chatgamelab-$image:$image_tag — the registry answered $code" \
+               "" \
+               "That release has no published image. CI builds them on a push to" \
+               "main, so a tag created by hand has none. Check the run:" \
+               "" \
+               "  gh run list --workflow=docker-image.yml --repo $app_repo_slug" ;;
+    esac
+  done
+fi
+
+remote_restore=""
+if [ -n "$restore_file" ]; then
+  remote_restore="/var/tmp/cgl-restore-$$.$(basename "$restore_file")"
+  echo ">> sending the dump ($(du -h "$restore_file" | cut -f1))"
+  # Landed rather than streamed straight into psql: a transfer that fails
+  # part-way then costs the transfer again rather than the database, and phase
+  # two can check the file before it drops anything.
+  ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$remote_restore'" < "$restore_file" \
+    || die "could not send the dump to the box."
+fi
+
 # --------------------------------------------------------- backup destination
 
 # Reported every run, and changed only when you say so. The one genuine secret
@@ -645,81 +727,6 @@ echo ">> the deploy trigger"
 rotate_hook_secret || echo "   the trigger may be dead; the ${update_interval:-15min} timer still converges"
 
 # ------------------------------------------------------------------- phase two
-
-# The box runs its own copy of this repository, so it can redeploy with no
-# laptop in the loop and both the manual and the automatic path execute the
-# same code. Which copy is decided here: the commit you are running from. That
-# makes "the phase two that runs" the phase two you are looking at — provided
-# you pushed it, which is checked rather than assumed.
-self_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
-[ -n "$self_sha" ] || die "$repo_root is not a git repository, so there is no phase two for the box to check out."
-git -C "$repo_root" fetch --quiet origin 2>/dev/null || true
-if ! git -C "$repo_root" for-each-ref --contains "$self_sha" --count=1 refs/remotes/origin | grep -q .; then
-  die "The commit you are deploying from ($(git -C "$repo_root" rev-parse --short HEAD)) is not on origin," \
-      "and the box checks this repository out from there." \
-      "" \
-      "  git push" \
-      "" \
-      "Phase two lives on the box deliberately, which is what makes a push the" \
-      "price of changing it."
-fi
-if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --quiet; then
-  echo "   note: your working tree has uncommitted changes, and the box will run $(git -C "$repo_root" rev-parse --short HEAD)"
-fi
-
-# Brought to that commit from here, rather than by the script inside it: a bug
-# in a self-checkout cannot be fixed by the checkout it broke, and a box wedged
-# that way needed someone to log in and clean up before anything could deploy
-# again. Done from this side, the next deploy repairs it.
-#
-# reset --hard because the clone is machine-managed and nobody edits it, so
-# local drift is to be discarded rather than protected.
-echo ">> bringing the box's clone to $(git -C "$repo_root" rev-parse --short HEAD)"
-ssh $ssh_opts "$runtime_user@$host" \
-  "git -C '$deploy_clone_remote' fetch --quiet origin \
-   && git -C '$deploy_clone_remote' reset --quiet --hard '$self_sha'" \
-  || die "Could not bring $deploy_clone_remote to $self_sha." \
-         "" \
-         "If the clone is missing entirely, re-run with FORCE_SETUP=1 to make" \
-         "ground setup recreate it."
-
-# Checked from here, where the answer can name the release and the workflow,
-# rather than as a pull failure on the box. Anonymous, because the packages are
-# public — which is also why the box needs no registry credential.
-if [ -n "$image_tag" ]; then
-  echo ">> checking the registry holds $image_tag"
-  registry_host="${image_registry%%/*}"
-  registry_path="${image_registry#*/}"
-  for image in db backend web; do
-    repo="$registry_path/chatgamelab-$image"
-    token="$(curl -fsS "https://$registry_host/token?scope=repository:$repo:pull&service=$registry_host" \
-      | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
-    code="$(curl -sS -o /dev/null -w '%{http_code}' \
-      -H "Authorization: Bearer $token" \
-      -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-      "https://$registry_host/v2/$repo/manifests/$image_tag")"
-    case "$code" in
-      200) echo "   chatgamelab-$image:$image_tag — present" ;;
-      *)   die "   chatgamelab-$image:$image_tag — the registry answered $code" \
-               "" \
-               "That release has no published image. CI builds them on a push to" \
-               "main, so a tag created by hand has none. Check the run:" \
-               "" \
-               "  gh run list --workflow=docker-image.yml --repo $app_repo_slug" ;;
-    esac
-  done
-fi
-
-remote_restore=""
-if [ -n "$restore_file" ]; then
-  remote_restore="/var/tmp/cgl-restore-$$.$(basename "$restore_file")"
-  echo ">> sending the dump ($(du -h "$restore_file" | cut -f1))"
-  # Landed rather than streamed straight into psql: a transfer that fails
-  # part-way then costs the transfer again rather than the database, and phase
-  # two can check the file before it drops anything.
-  ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$remote_restore'" < "$restore_file" \
-    || die "could not send the dump to the box."
-fi
 
 echo ">> phase two on the box"
 set -- "$deploy_clone_remote/box/cgl-deploy" \
