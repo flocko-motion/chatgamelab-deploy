@@ -47,7 +47,15 @@ deploy_clone: "{{ deploy_base }}/deploy"
 
 # The stack's environment file: committed config from host_vars, plus the two
 # values generated on the box and never held anywhere else (see box/cgl-env).
-env_file: "{{ runtime_home }}/env"
+# Where box/lib.sh reads the paths from. Beside the clone rather than in
+# runtime_user's home, because build_user has to read it too and a home is mode
+# 0700 — the same reason the clone itself lives here. This one path is all that
+# box/ hardcodes, since it is what tells box/ where everything else lives.
+#
+# The stack's own two environment files, env.config and env.secret, are derived
+# from runtime_home by box/lib.sh rather than named here: one definition each,
+# in the place that opens them.
+box_env: "{{ deploy_base }}/box.env"
 
 # The bare mirror every checkout comes from. A full mirror is ~100 MB, which
 # buys the ability to check out any reachable commit without depending on
