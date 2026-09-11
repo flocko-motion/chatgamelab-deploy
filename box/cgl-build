@@ -76,22 +76,39 @@ build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # What the footer and the version tooltip show. The tag wins when the commit
 # carries one, so a released build says 1.56.0 and nothing else.
 #
-# Otherwise git describe, which names the nearest reachable tag, the distance
-# from it, and the commit: 1.47.0-251-g4ba93d8. Note the tag it reaches for on
-# a development commit is older than main's latest — v1.48.0 onwards sit on
-# main and are not ancestors of development — so the number is the last release
-# in this commit's own history rather than the newest release anywhere.
+# Otherwise the scheme CI uses, plus the commit. `git describe` is the obvious
+# tool here and the wrong one: every release is a "Merge pull request from
+# development" commit created on main, and the tags sit on those merge commits.
+# A merge commit on main is never an ancestor of development — development is
+# its parent — so describe reaches back past all of them to v1.47.0, the last
+# tag on a commit the two branches share. That base never advances and the
+# distance grows forever, so it says less the longer it runs.
 #
-# The leading v is stripped because the UI adds its own.
+# Counting instead asks a question ancestry does not constrain: the highest
+# version tag by name, and how many commits this one has that the tag does not.
+# It is what .github/workflows/docker-image.yml computes, so a build here reads
+# the way a CI build of the same commit would.
 #
-# CI computes a semver instead (1.57.0-dev.N, from the commit count since the
-# last stable tag), which is right for a branch build and wrong here: this box
-# deploys arbitrary commits, and two commits on different branches can sit the
-# same distance from a tag. The commit has to be in the string.
-version="$(git -C "$APP_WORKTREE" describe --tags --exact-match "$app_sha" 2>/dev/null \
-  || git -C "$APP_WORKTREE" describe --tags "$app_sha" 2>/dev/null \
-  || printf '0.0.0-g%s' "$short")"
+# The commit is appended because this box deploys arbitrary commits, and two
+# commits on different branches can sit the same distance from a tag. CI needs
+# no such suffix, since it only ever builds two branches.
+#
+# The leading v is stripped throughout because the UI adds its own.
+version="$(git -C "$APP_WORKTREE" describe --tags --exact-match "$app_sha" 2>/dev/null || true)"
 version="${version#v}"
+if [ -z "$version" ]; then
+  # awk rather than `grep -v -- '-'`: same intent, and it excludes prerelease
+  # tags without depending on how a given grep reads a lone dash.
+  latest="$(git -C "$APP_WORKTREE" tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+    --sort=-version:refname | awk '!/-/' | head -1)"
+  if [ -n "$latest" ]; then
+    base="${latest#v}"; major="${base%%.*}"; rest="${base#*.}"; minor="${rest%%.*}"
+    count="$(git -C "$APP_WORKTREE" rev-list "$latest..$app_sha" --count)"
+    version="${major}.$((minor + 1)).0-dev.${count}+${short}"
+  else
+    version="0.0.0+${short}"
+  fi
+fi
 say "version $version" >&2
 
 build_one() { # image dockerfile context
