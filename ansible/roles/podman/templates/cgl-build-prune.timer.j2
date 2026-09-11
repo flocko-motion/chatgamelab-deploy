@@ -1,0 +1,11 @@
+# Managed by ansible (roles/podman).
+[Unit]
+Description=Weekly chatgamelab build cache prune
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

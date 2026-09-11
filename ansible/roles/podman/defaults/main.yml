@@ -3,3 +3,4 @@
 # the socket path below is the real uid rather than an assumption. Declared here
 # so a role run in isolation fails loudly instead of templating an empty path.
 runtime_uid: ""
+build_uid: ""

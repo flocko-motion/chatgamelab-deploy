@@ -1,0 +1,13 @@
+# Managed by ansible (roles/podman).
+[Unit]
+Description=Prune the chatgamelab build cache
+
+[Service]
+Type=oneshot
+User={{ build_user }}
+Group={{ build_user }}
+# Rootless podman locates its own storage through this; a system unit is given
+# no XDG_RUNTIME_DIR, and lingering (roles/common) is what keeps the path alive
+# with nobody logged in.
+Environment=XDG_RUNTIME_DIR=/run/user/{{ build_uid }}
+ExecStart=/usr/bin/podman builder prune --force --filter until=336h

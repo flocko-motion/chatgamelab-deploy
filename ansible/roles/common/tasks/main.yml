@@ -83,17 +83,20 @@
 # Their units have to run with nobody logged in, which is what lingering is.
 # Without it `systemctl --user` works over ssh and then every container is
 # killed the moment the session closes.
-# Read back rather than assumed: the socket path the podman role templates is
-# /run/user/<uid>, and a guessed uid is a path that silently does not exist.
-- name: Read the runtime user's uid
+# Read back rather than assumed: the unit files below template /run/user/<uid>,
+# and a guessed uid is a path that silently does not exist.
+- name: Read the two users' uids
   ansible.builtin.getent:
     database: passwd
-    key: "{{ runtime_user }}"
 
-- name: Hold it where the podman role can reach it
+# ansible_facts rather than the injected top-level name, which ansible-core
+# deprecates and removes in 2.24.
+- name: Hold them where the other roles can reach them
   ansible.builtin.set_fact:
     runtime_user_info:
-      uid: "{{ getent_passwd[runtime_user][1] }}"
+      uid: "{{ ansible_facts['getent_passwd'][runtime_user][1] }}"
+    build_user_info:
+      uid: "{{ ansible_facts['getent_passwd'][build_user][1] }}"
 
 - name: Enable lingering so user units survive logout
   ansible.builtin.command: "loginctl enable-linger {{ item }}"

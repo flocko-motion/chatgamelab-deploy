@@ -38,6 +38,7 @@
     - role: podman
       vars:
         runtime_uid: "{{ runtime_user_info.uid }}"
+        build_uid: "{{ build_user_info.uid }}"
     - nginx
     - cgl_box
     - role: webhook

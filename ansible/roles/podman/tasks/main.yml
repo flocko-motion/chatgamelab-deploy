@@ -46,9 +46,24 @@
 # `system prune` deliberately: it touches the cache alone, and never a tagged
 # image. Those are the point rather than clutter, since an image tagged by SHA
 # is what makes returning to a commit take seconds.
-- name: Prune the build cache weekly
-  ansible.builtin.cron:
-    name: podman build cache prune
-    user: "{{ build_user }}"
-    special_time: weekly
-    job: "podman builder prune --force --filter until=336h >/dev/null 2>&1"
+#
+# A systemd timer rather than cron, because a minimal Debian ships no crontab
+# and everything else here is already systemd-shaped.
+- name: Install the build cache prune unit and its timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - cgl-build-prune.service
+    - cgl-build-prune.timer
+  notify: reload systemd
+
+- name: Reload systemd before starting the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the weekly prune
+  ansible.builtin.systemd_service:
+    name: cgl-build-prune.timer
+    enabled: true
+    state: started
