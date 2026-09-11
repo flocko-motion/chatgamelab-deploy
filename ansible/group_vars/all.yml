@@ -1,0 +1,103 @@
+# True of every instance. What differs per instance lives in host_vars/<host>.yml,
+# which is also the file that has to exist before ./deploy.sh will accept a
+# server name.
+
+# Both repositories are public and are fetched over https, so the box holds no
+# GitHub credential of any kind: no deploy key, no token, nothing whose leak
+# would matter. The deploy repository can be public because it carries no
+# secrets — every value the instance needs is either committed config here or
+# generated on the box itself (see box/cgl-env).
+app_repo: https://github.com/flocko-motion/chatgamelab.git
+deploy_repo: https://github.com/flocko-motion/chatgamelab-deploy.git
+
+# Two unprivileged users, two subuid ranges, and no root anywhere in the
+# picture except nginx's master process and sshd.
+#
+# The split is the point. Building runs `npm ci` over 477 packages and executes
+# their install scripts; that happens as build_user, whose namespace can reach
+# neither the running containers nor the database volume. The stack runs as
+# runtime_user. Rootful Docker would give the same convenience and neither
+# boundary, since membership in the docker group is root-equivalent.
+runtime_user: cgl
+runtime_home: /var/lib/cgl
+build_user: cgl-build
+build_home: /var/lib/cgl-build
+
+# Where the deploy repository clones itself on the box. Phase two runs from
+# here, so the box redeploys without a laptop in the loop.
+deploy_clone: "{{ runtime_home }}/deploy"
+
+# The stack's environment file: committed config from host_vars, plus the two
+# values generated on the box and never held anywhere else (see box/cgl-env).
+env_file: "{{ runtime_home }}/env"
+
+# The bare mirror every checkout comes from. A full mirror is ~100 MB, which
+# buys the ability to check out any reachable commit without depending on
+# GitHub serving arbitrary SHAs to `git fetch`.
+app_mirror: "{{ build_home }}/chatgamelab.git"
+app_worktree: "{{ build_home }}/src"
+
+# Images move between the two rootless stores as a file, since neither user can
+# read the other's storage. Under /var/tmp because a handoff is worth exactly
+# as long as the deploy that made it.
+handoff_dir: /var/tmp/cgl-handoff
+
+# The web container binds here and nginx is the sole public entry point,
+# terminating TLS. Above 1024, because a rootless container cannot bind lower.
+web_bind_address: 127.0.0.1
+web_bind_port: 8080
+
+# Rootless podman speaks the Docker API on this socket, which lets the app
+# repository's own docker-compose.yml run verbatim — including
+# `depends_on: condition: service_healthy`, the part every compose
+# reimplementation handles worst.
+podman_socket: "/run/user/{{ runtime_uid }}/podman/podman.sock"
+
+# The public halves of the keys allowed in as runtime_user. Public key material,
+# so committing it is safe, and listing it here rather than reading your
+# ~/.ssh means the box admits the same keys whichever machine runs ./deploy.sh —
+# a laptop and a desktop, macOS and Linux.
+#
+# Root's own key is installed through your provider's console, and is needed
+# only for the first run: ground setup is what creates runtime_user.
+deploy_public_keys:
+  - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCuXYNpMq+8EgKcI3jbW4TbzMBvVOCNeU/MvNddnmjtHbNR9FWXpBCnfkb0FW5odMskJdi+sqQK2nbUKTw6xGyRF1toMsAXJY8IheaTd16mnvHH/OZMcNB9cCbN6AYzeDlpzivaqL/nFeAb5GNDITHLjQyt5y2Bxsp6O+j0udQG9pSher8BeoGLLsaYyH4hGoL54RxjBTZeggYZgwGf/kuoAKe+EHpcX9q2WbpF4oyIg42Nibo3muINRG1h+GeL+VFvRofxsM1a+5ddnQW0ZgkoDd7ZGXyA19v3Q4VaBTuPy0qZE5bqrP9TsFjm9RDeunivymapi3T6Zmp2EqloM9fwGYtkDco5w98gg/xMsgKQ+K45WhgknqR4dGcK7E1wEg1e6T5mjrgNjNEfbOqJsrWuAk7H1JH0Gr9TBraphVI53XExGN0z98eap4alMsSX6T2hQCLpDmLYuwSGJIyplHjRhs2kqac+yK9n7nz1Yykhrz5hImn65+34zXgecg1izNk= flo@787dd836-a972-4ed4-b67e-c79bb791b4a7"
+  - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDCb/Tz1DeKxQP8NnOwXhikxMA/NiGvEXUGbyt6LBKXueH5ar23kSB6YIXWry90oS7/g9BPJVLBzv8o0IoSw24vYlRzlS0+iw2s6ph1Ykj7LTNH9jzazWC+m8CjstuD4H2ni83czhOWLc2p/WCa5BbDo1PP8Maj+PyNUFpIJebXEs01wwGS1/v2HsAMVvIaAvrQvhczvwu9VRcGgTkOz8mU6kxGhN2iWK5Wn3DfqgX00ILkMTMuaVbgt51pbPxHxE6w9HnLIPYH7p0WddejffKBWQ+P6rzr26LUHBzdlI+Fo/+KbNv5haL8bvfxZ09JgtQVheMYJDJ1FFIw5CQZ/SUQ9MlaT9WLY7X+rhPD6Ucfv3PRgQjIf1odmJwrVEstih+LpryVKSFWkvgPaAV5mfGaoNOZQI+JGwJkbDJ2J1J0oUHVL810lWa8l+oZWQtoGKzeCGVhCCXrUeAdSz1eD+OPDtA8YBY9x1N8QYj97a23odKZlLENQNwZVoxo3BK1Omk= flo@DESKTOP-UTS0MA1"
+
+# ---------------------------------------------------------------- auto-deploy
+
+# The box converges on its tracked branch by itself, so collaborators see their
+# merges without anyone running anything. ./deploy.sh is the override: it names
+# a commit, and that commit stays until the next trigger or timer tick moves
+# the box back onto the branch.
+#
+# This is the one place where a branch name rather than a resolved SHA reaches
+# the box, necessarily — the box is what does the resolving when nobody is
+# driving. The safety of that rests on who can push the branch, which is why
+# the README's trust boundaries name it.
+
+# The trigger endpoint CI posts to. The listener behind it binds to localhost;
+# nginx is its only public entry point, so the address CI uses is
+# https://<domain>{{ hook_path }}.
+hook_path: /_hooks/deploy
+hook_port: 8081
+
+# The HMAC secret the endpoint verifies X-Hub-Signature-256 against. ./deploy.sh
+# mints a fresh one every run and writes both ends itself — here over SSH, and
+# on GitHub as the Actions secret below — so it rotates on its own, lives in no
+# password manager, and nobody ever reads it. While it is empty every trigger is
+# rejected, which costs a deploy its promptness and nothing else.
+hook_secret_path: "{{ runtime_home }}/hook-secret"
+
+# What that same secret is called on the GitHub side, in the application
+# repository whose workflow signs with it.
+hook_secret_name: CGL_DEPLOY_HOOK_SECRET
+app_repo_slug: flocko-motion/chatgamelab
+
+# Where the listener drops the file the update unit watches. Under /run
+# deliberately: a trigger is worth exactly as long as the boot it arrived in,
+# and one surviving a reboot would deploy nothing new anyway.
+hook_runtime_dir: /run/cgl-deploy
+
+# How long a trigger that never arrives can delay a deploy.
+update_interval: 15min

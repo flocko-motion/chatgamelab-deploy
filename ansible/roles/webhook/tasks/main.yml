@@ -1,0 +1,66 @@
+---
+# The box's own half of auto-deploy: a listener nginx proxies the public
+# trigger to, a oneshot unit that does the converging, and the two things that
+# ask for it — the listener's trigger file, and a timer for the triggers that
+# never arrive. Both routes run the same unit, so systemd serialises them.
+
+# Declared to tmpfiles rather than created here, so it comes back on its own
+# after a reboot — the path unit watches a file inside it and would otherwise
+# be watching a directory that no longer exists.
+- name: Declare the trigger directory to systemd-tmpfiles
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/cgl-deploy.conf
+    content: |
+      d {{ hook_runtime_dir }} 0755 {{ runtime_user }} {{ runtime_user }} -
+    mode: "0644"
+
+- name: Create the trigger directory for this boot
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/cgl-deploy.conf
+  changed_when: false
+
+# Created empty and left that way: ./deploy.sh fills it over SSH, so the secret
+# never passes through ansible's variables or logs. Empty is a safe resting
+# state — every trigger is rejected while it is, and the timer goes on
+# deploying regardless.
+- name: Ensure the hook secret file exists, readable to nobody else
+  ansible.builtin.copy:
+    dest: "{{ hook_secret_path }}"
+    content: ""
+    owner: "{{ runtime_user }}"
+    group: "{{ runtime_user }}"
+    mode: "0600"
+    force: false
+
+- name: Install the hook listener
+  ansible.builtin.template:
+    src: hook-listener.py.j2
+    dest: /usr/local/bin/cgl-deploy-hook
+    mode: "0755"
+  notify: restart hook listener
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - cgl-hook.service
+    - cgl-update.service
+    - cgl-update.path
+    - cgl-update.timer
+  notify:
+    - reload systemd
+    - restart hook listener
+
+- name: Reload systemd now, before anything below starts a unit
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the listener, the trigger watch and the timer
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - cgl-hook.service
+    - cgl-update.path
+    - cgl-update.timer

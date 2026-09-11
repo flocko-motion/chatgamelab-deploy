@@ -1,0 +1,57 @@
+---
+# Ground setup: packages, the two unprivileged users and their subordinate id
+# ranges, podman, nginx and TLS, and the box's own clone of this repository.
+# It never starts the stack — that is a content deploy, which is box/cgl-deploy
+# and runs on the box.
+#
+# ./deploy.sh runs this when anything under ansible/ has changed since the box
+# last recorded it, and skips it when nothing has, so the common case of
+# deploying another commit costs no ansible at all.
+- name: Prepare the chatgamelab box
+  hosts: chatgamelab
+  become: true
+
+  pre_tasks:
+    - name: Refuse a box that is not Debian 13 or newer
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Debian'
+          - ansible_facts['distribution_major_version'] | int >= 13
+        fail_msg: >-
+          This expects Debian 13 (trixie) or newer and found
+          {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_major_version'] }}. Debian 13 is the
+          floor because that is where podman becomes 5.x, which is what the
+          rootless stack here is built on.
+
+    - name: Refuse a placeholder deploy key
+      ansible.builtin.assert:
+        that: deploy_public_keys | reject('search', 'PUT_YOUR_SSH_PUBLIC_KEY_HERE') | list | length > 0
+        fail_msg: >-
+          deploy_public_keys in group_vars/all.yml is still a placeholder. Put
+          your SSH public key there — it is public key material, so committing
+          it is safe, and it is what lets the box admit you as
+          {{ runtime_user }} after this run.
+
+  roles:
+    - common
+    - role: podman
+      vars:
+        runtime_uid: "{{ runtime_user_info.uid }}"
+    - nginx
+    - cgl_box
+    - role: webhook
+      vars:
+        runtime_uid: "{{ runtime_user_info.uid }}"
+
+  tasks:
+    # Written last, and only on a run that reached here, so a failed sweep
+    # leaves no record and ./deploy.sh runs the sweep again next time.
+    - name: Record the ansible tree this box converged to
+      ansible.builtin.copy:
+        dest: "{{ runtime_home }}/.ground-hash"
+        content: "{{ ground_hash }}"
+        owner: "{{ runtime_user }}"
+        group: "{{ runtime_user }}"
+        mode: "0644"
+      when: ground_hash is defined

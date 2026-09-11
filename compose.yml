@@ -1,0 +1,104 @@
+# The stack as this box runs it. Derived from the application repository's own
+# docker-compose.yml, with four deliberate differences:
+#
+#   - Images are local and tagged by commit SHA, since the box builds them
+#     itself. That is what makes any commit deployable, and what makes
+#     switching back to one already built take seconds.
+#   - web publishes a port on localhost. Under Coolify the proxy reached the
+#     container directly; here nginx on the host is the sole public entry
+#     point, and a rootless container cannot bind below 1024 anyway.
+#   - The schema.sql bind mount is gone. The backend embeds schema.sql and
+#     migrations/*.sql and applies them itself (server/db/init.go:26,29), so
+#     the mount only pinned the deploy repo to an application schema version.
+#   - The backup secret block is gone, along with its /dev/null default.
+#     Backups are off here; turning them on is deliberate work.
+#
+# Environment arrives as two files: env.config, which ansible renders from
+# host_vars and holds only public values, and env.secret, which is generated on
+# the box and holds the Postgres password and the admin bootstrap address.
+
+services:
+  db:
+    image: localhost/chatgamelab-db:${IMAGE_TAG}
+    container_name: chatgamelab-db
+    environment:
+      POSTGRES_DB: chatgamelab
+      POSTGRES_USER: chatgamelab
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatgamelab -d chatgamelab"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    image: localhost/chatgamelab-backend:${IMAGE_TAG}
+    container_name: chatgamelab-backend
+    environment:
+      DB_HOST: db
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DATABASE: ${DB_DATABASE}
+      PORT_BACKEND: ${PORT_BACKEND}
+      PORT_POSTGRES: ${PORT_POSTGRES}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      PUBLIC_URL: ${PUBLIC_URL}
+      API_BASE_URL: ${API_BASE_URL}
+      SENTRY_DSN_BACKEND: ${SENTRY_DSN_BACKEND}
+      # Backend-only: it turns on debug logging, db.Preseed's well-known dev
+      # accounts, and two routes with no authentication, which the nginx vhost
+      # refuses at the edge. The frontend is unaffected — its dev switch is
+      # Vite's build-time import.meta.env.DEV (web/src/providers/auth/
+      # useTokenManager.ts:33), false in a production build — so sign-in here
+      # goes through Auth0 exactly as it would with dev mode off.
+      DEV_MODE: ${DEV_MODE}
+      # DEV_JWT_SECRET is absent from this list deliberately, and that absence
+      # is what makes DEV_MODE safe to run: unreachable by the container, the
+      # HS256 signing path refuses, and GET /api/users/{id}/jwt can mint
+      # nothing. box/cgl-deploy refuses to start a stack where both are set.
+      # The address that becomes admin on a database with no admin yet. Inert
+      # on any other database: the bootstrap closes once one exists
+      # (server/db/user_roles.go:55), which is why ./deploy.sh asks for it at
+      # --reset-db and at no other time.
+      ADMIN_EMAILS: ${ADMIN_EMAILS}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/cgl", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: ["server"]
+    restart: unless-stopped
+
+  web:
+    image: localhost/chatgamelab-web:${IMAGE_TAG}
+    container_name: chatgamelab-web
+    environment:
+      API_BASE_URL: ${API_BASE_URL}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      PUBLIC_URL: ${PUBLIC_URL}
+      SENTRY_DSN_FRONTEND: ${SENTRY_DSN_FRONTEND}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_BIND_ADDRESS}:${WEB_BIND_PORT}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  db_data:

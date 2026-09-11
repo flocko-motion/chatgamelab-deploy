@@ -1,0 +1,9 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: restart hook listener
+  ansible.builtin.systemd_service:
+    name: cgl-hook.service
+    state: restarted

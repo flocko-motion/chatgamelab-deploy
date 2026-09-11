@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# Phase two: everything that happens on the box. Invoked by ./deploy.sh over
+# SSH as RUNTIME_USER, and runnable by hand here for the same effect.
+#
+#   cgl-deploy --deploy-sha <sha> --app-sha <sha> --target-migration <n>
+#              [--reset-db <admin-email>]
+#
+# Order matters and is the one thing to preserve when editing: build, then
+# destroy, then switch. A build that fails leaves the previous stack serving
+# with its data intact, which a destroy-first ordering would not.
+. "$(dirname "$0")/lib.sh"
+
+deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --deploy-sha)       shift; deploy_sha="${1:-}" ;;
+    --app-sha)          shift; app_sha="${1:-}" ;;
+    --target-migration) shift; target_migration="${1:-}" ;;
+    --reset-db)         shift; admin_email="${1:-}"; reset_db=1 ;;
+    *) die "cgl-deploy: unexpected argument '$1'" ;;
+  esac
+  shift
+done
+[ -n "$deploy_sha" ] && [ -n "$app_sha" ] && [ -n "$target_migration" ] \
+  || die "usage: cgl-deploy --deploy-sha <sha> --app-sha <sha> --target-migration <n> [--reset-db <email>]"
+
+# ---------------------------------------------------------- self-checkout
+
+# The box runs the deploy repository at the commit ./deploy.sh was run from, so
+# what executes here is what you were looking at there. This script is inside
+# the thing it checks out, so it re-execs itself afterwards — once, guarded, or
+# a mismatch that checkout cannot fix would loop.
+if [ "$(git -C "$DEPLOY_CLONE" rev-parse HEAD)" != "$deploy_sha" ]; then
+  [ -z "${CGL_REEXEC:-}" ] || die "checked out $deploy_sha and HEAD still disagrees — giving up rather than looping."
+  step "checking out the deploy commit"
+  git -C "$DEPLOY_CLONE" fetch --quiet origin
+  git -C "$DEPLOY_CLONE" checkout --quiet --detach "$deploy_sha" \
+    || die "$deploy_sha is not in $DEPLOY_CLONE — is it pushed?"
+  say "$(git -C "$DEPLOY_CLONE" rev-parse --short=7 HEAD)"
+  CGL_REEXEC=1 exec "$DEPLOY_CLONE/box/cgl-deploy" \
+    --deploy-sha "$deploy_sha" --app-sha "$app_sha" \
+    --target-migration "$target_migration" \
+    $( [ "$reset_db" -eq 1 ] && printf '%s %s' --reset-db "$admin_email" )
+fi
+
+short="${app_sha}"; short="${short:0:7}"
+
+# ---------------------------------------------------------------- images
+
+have_all_images() {
+  local image
+  for image in $IMAGE_NAMES; do
+    podman image exists "$(image_ref "$image" "$app_sha")" || return 1
+  done
+  return 0
+}
+
+step "images for $short"
+if have_all_images; then
+  say "already in the local store — no build needed"
+else
+  say "not built here yet"
+  # The one sudoers entry on the box (/etc/sudoers.d/50-cgl-build). The build
+  # runs as a user that can reach neither the containers nor the database
+  # volume, because it is the step that executes other people's code.
+  sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" --app-sha "$app_sha"
+
+  archive="$HANDOFF_DIR/$app_sha.tar"
+  [ -f "$archive" ] || die "the build reported success and left no archive at $archive."
+  step "loading the built images"
+  podman load --input "$archive" | sed 's/^/   /'
+  rm -f "$archive"
+  have_all_images || die "loaded the archive and the images are still not all present."
+fi
+
+# ------------------------------------------------------------- environment
+
+"$DEPLOY_CLONE/box/cgl-env" ensure
+
+# DEV_MODE registers two routes with no authentication at all
+# (server/api/routes/router.go:81), one of which signs a token for whatever
+# user id the URL names — and the dev admin ids are compile-time constants. So
+# with a signing secret present, one unauthenticated request is admin.
+#
+# Checked here rather than trusted to the templates, because the cost of the
+# two drifting into agreement is the whole instance, and because a value can
+# reach env.secret by a route no template controls.
+dev_mode="$(sed -n 's/^DEV_MODE=//p' "$ENV_CONFIG" | head -1)"
+dev_secret="$(sed -n 's/^DEV_JWT_SECRET=//p' "$ENV_CONFIG" | head -1)$(secret_get DEV_JWT_SECRET || true)"
+if [ "$dev_mode" = "true" ] && [ -n "$dev_secret" ]; then
+  die "DEV_MODE is true and DEV_JWT_SECRET is set, which together make this" \
+      "instance trivially compromisable: GET /api/users/{id}/jwt needs no" \
+      "credential and signs a token for any user id, and the dev admin ids are" \
+      "constants in server/db/preseed.go." \
+      "" \
+      "Remove DEV_JWT_SECRET, or turn DEV_MODE off. Nothing has been started."
+fi
+
+# --------------------------------------------------------------- migrations
+
+# The application runs migrations forward only and has no down path
+# (server/db/init.go:298), so moving to an older commit leaves the schema ahead
+# of the code. That is silently permitted and sometimes wrong: across the
+# migration set there are DROP COLUMN and RENAME COLUMN statements, and
+# crossing one backwards gives a binary querying columns that no longer exist,
+# failing at query time rather than at startup.
+live_migration=""
+if compose ps --status running --services 2>/dev/null | grep -qx db; then
+  live_migration="$(compose exec -T -e PGPASSWORD="$(secret_get DB_PASSWORD)" db \
+    psql -U chatgamelab -d chatgamelab -tAc \
+    "SELECT schema_version FROM system_settings WHERE id = '00000000-0000-0000-0000-000000000001'::uuid" \
+    2>/dev/null | tr -d '[:space:]' || true)"
+fi
+
+step "migrations"
+if [ -z "$live_migration" ]; then
+  say "no live schema to compare against — the database will initialise at $target_migration"
+elif [ "$target_migration" -ge "$live_migration" ]; then
+  say "$live_migration -> $target_migration, applied on start"
+elif [ "$reset_db" -eq 1 ]; then
+  say "$live_migration -> $target_migration, going backwards — and the database goes below"
+else
+  die "This commit is at migration $target_migration and the database is at $live_migration." \
+      "" \
+      "Migrations only run forwards here, so the older code would run against a" \
+      "newer schema — and the set in between contains DROP COLUMN and RENAME" \
+      "COLUMN, which fails at query time rather than at startup." \
+      "" \
+      "Deploy it with a fresh database instead:" \
+      "" \
+      "  ./deploy.sh $DOMAIN <commit> --reset-db <your-address>" \
+      "" \
+      "Nothing has been changed; the box serves what it served before."
+fi
+
+# -------------------------------------------------------------- resetting
+
+# Here, and not earlier: the images are built and loaded, so what replaces the
+# database is a stack that exists. Destroying first is how a failed build
+# leaves the box with no data and nothing to serve it.
+if [ "$reset_db" -eq 1 ]; then
+  step "resetting the database"
+  say "every game, session and account goes; $admin_email becomes the admin of what replaces it"
+  compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  secret_set ADMIN_EMAILS "$admin_email"
+  say "volume dropped"
+fi
+
+# --------------------------------------------------------------- switching
+
+step "starting $short"
+IMAGE_TAG="$app_sha" compose up --detach --remove-orphans 2>&1 | sed 's/^/   /'
+
+# `up -d` reports whether it started a container, and not whether it stayed up:
+# anything that crash-loops passes it silently otherwise.
+step "waiting for the stack to settle"
+settled=0
+for _ in $(seq 1 60); do
+  running="$(IMAGE_TAG="$app_sha" compose ps --status running --services 2>/dev/null | tr '\n' ' ')"
+  case " $running " in
+    *" db "*) case " $running " in *" backend "*) case " $running " in
+      *" web "*) settled=1 ;; esac ;; esac ;;
+  esac
+  [ "$settled" -eq 1 ] && break
+  sleep 2
+done
+
+if [ "$settled" -ne 1 ]; then
+  echo >&2
+  echo "   The stack did not settle. Running: ${running:-nothing}" >&2
+  echo >&2
+  IMAGE_TAG="$app_sha" compose logs --tail=40 2>&1 | sed 's/^/   /' >&2
+  die "" "The previous images are still in the store, so an earlier commit can be" \
+         "redeployed in seconds:" \
+         "" \
+         "  ./deploy.sh $DOMAIN <previous-commit>"
+fi
+say "db, backend and web all running"
+
+# ------------------------------------------------------- the admin bootstrap
+
+# db.Preseed creates admin-1@dev.local and admin-2@dev.local holding the admin
+# role (server/db/preseed.go:122), and CountAdmins counts them — which closes
+# the ADMIN_EMAILS gate (server/db/user_roles.go:55) before any real person has
+# signed in. Those two accounts carry no auth0_id and, with DEV_JWT_SECRET
+# unset, no way to authenticate as them either, so dev mode alone would leave
+# an instance with two unreachable admins and a gate nobody can reopen.
+#
+# Dropping their admin roles while no other admin exists holds the gate open
+# for exactly the window it is meant for. Preseed puts the roles back on the
+# next restart, by which time a real admin exists and this does nothing — so it
+# runs on every deploy and is idempotent, rather than being tied to --reset-db
+# and leaving a restart able to close the gate again.
+step "admin bootstrap"
+removed="$(compose exec -T -e PGPASSWORD="$(secret_get DB_PASSWORD)" db \
+  psql -U chatgamelab -d chatgamelab -tAc "
+    WITH gone AS (
+      DELETE FROM user_role r
+      USING app_user u
+      WHERE r.user_id = u.id
+        AND r.role = 'admin'
+        AND u.email LIKE '%@dev.local'
+        AND NOT EXISTS (
+          SELECT 1 FROM user_role r2
+          JOIN app_user u2 ON u2.id = r2.user_id
+          WHERE r2.role = 'admin'
+            AND u2.deleted_at IS NULL
+            AND (u2.email IS NULL OR u2.email NOT LIKE '%@dev.local')
+        )
+      RETURNING 1
+    ) SELECT count(*) FROM gone;" 2>/dev/null | tr -d '[:space:]' || echo "")"
+
+case "${removed:-}" in
+  ""|0) say "a real admin already holds the role — left alone" ;;
+  *)    say "$removed preseeded dev admin role(s) dropped, so the gate is open"
+        say "the first sign-in from an address in ADMIN_EMAILS becomes admin" ;;
+esac
+
+# Recorded last, so it names a commit that actually came up rather than one
+# that was merely asked for.
+printf '%s\n' "$app_sha" > "$RUNTIME_HOME/deployed-ref"
+step "$short is up"

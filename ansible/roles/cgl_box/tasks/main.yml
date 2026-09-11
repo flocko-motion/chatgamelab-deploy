@@ -1,0 +1,82 @@
+---
+- name: Create the handoff directory
+  ansible.builtin.file:
+    path: "{{ handoff_dir }}"
+    state: directory
+    owner: "{{ build_user }}"
+    group: "{{ runtime_user }}"
+    # Group-readable so the runtime user can load what the build user saved,
+    # and group-writable by nobody: the build side writes, the runtime side
+    # reads, and neither can reach into the other's image store directly.
+    mode: "0750"
+
+# The box's own copy of this repository, which is what phase two runs from —
+# so the box can redeploy with no laptop in the loop, and the manual and
+# automatic paths execute the same code. Cloned here at whatever the default
+# branch is; ./deploy.sh then has phase two check out the exact commit you ran
+# it from.
+#
+# Over https and with no credential, because the repository is public: it
+# carries no secrets, which is what makes that possible.
+- name: Clone this repository onto the box
+  ansible.builtin.git:
+    repo: "{{ deploy_repo }}"
+    dest: "{{ deploy_clone }}"
+    version: main
+    # Phase two moves HEAD around by design, so ansible must not treat that as
+    # drift to be corrected on the next ground sweep.
+    update: false
+  become: true
+  become_user: "{{ runtime_user }}"
+
+- name: Make phase two executable
+  ansible.builtin.file:
+    path: "{{ deploy_clone }}/box"
+    mode: "0755"
+    recurse: true
+    owner: "{{ runtime_user }}"
+    group: "{{ runtime_user }}"
+
+# A full mirror of the application, ~100 MB, which is what makes any reachable
+# commit checkoutable without depending on GitHub serving arbitrary SHAs to a
+# fetch. Owned by the build user, since building is all it is for.
+- name: Mirror the application repository
+  ansible.builtin.git:
+    repo: "{{ app_repo }}"
+    dest: "{{ app_mirror }}"
+    bare: true
+    update: false
+  become: true
+  become_user: "{{ build_user }}"
+
+# The public half of the stack's environment: everything in host_vars, which is
+# Auth0 identifiers and Sentry DSNs and nothing secret. Rewritten on every
+# ground sweep.
+- name: Template the public environment
+  ansible.builtin.template:
+    src: env.config.j2
+    dest: "{{ runtime_home }}/env.config"
+    owner: "{{ runtime_user }}"
+    group: "{{ runtime_user }}"
+    mode: "0644"
+
+- name: Template the paths phase two works with
+  ansible.builtin.template:
+    src: box.env.j2
+    dest: "{{ runtime_home }}/box.env"
+    owner: "{{ runtime_user }}"
+    group: "{{ runtime_user }}"
+    mode: "0644"
+
+# The other half, which ansible creates empty and never writes: the Postgres
+# password and the admin bootstrap address are generated or given on the box
+# (box/cgl-env), so no secret passes through ansible's variables or logs.
+# force: false is what keeps a ground sweep from wiping them.
+- name: Ensure the secret environment exists, readable to nobody else
+  ansible.builtin.copy:
+    dest: "{{ runtime_home }}/env.secret"
+    content: ""
+    owner: "{{ runtime_user }}"
+    group: "{{ runtime_user }}"
+    mode: "0600"
+    force: false

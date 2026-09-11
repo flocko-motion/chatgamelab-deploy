@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Builds the three images for one commit, as BUILD_USER, under rootless
+# podman. Invoked by cgl-deploy through the one sudoers entry that exists
+# (/etc/sudoers.d/50-cgl-build).
+#
+# This is the step that runs other people's code: `npm ci` over 477 packages
+# and their install scripts, plus whatever the Go module graph pulls. It
+# therefore runs as a user whose namespace can reach neither the running
+# containers nor the database volume — which holds users' own provider API keys
+# in plaintext (server/db/schema.sql:202). There is no podman socket for this
+# user either, so a hostile package has no API to talk to.
+#
+# Contexts and dockerfiles match .github/workflows/docker-image.yml, so an
+# image built here is the same recipe CI would have used.
+. "$(dirname "$0")/lib.sh"
+
+app_sha=""; print_migration=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --app-sha) shift; app_sha="${1:-}" ;;
+    # Prepares the worktree and reports its migration high-water mark, without
+    # building. cgl-update needs that number before it can decide whether a
+    # deploy is safe, and this user is the only one that can read the tree.
+    --print-migration) print_migration=1 ;;
+    *) die "cgl-build: unexpected argument '$1'" ;;
+  esac
+  shift
+done
+[ -n "$app_sha" ] || die "usage: cgl-build --app-sha <sha> [--print-migration]"
+
+[ "$(id -un)" = "$BUILD_USER" ] \
+  || die "cgl-build runs as $BUILD_USER and is running as $(id -un)."
+
+step "fetching $app_sha" >&2
+git --git-dir="$APP_MIRROR" fetch --quiet --prune --prune-tags --tags origin \
+  '+refs/heads/*:refs/heads/*'
+
+if [ ! -d "$APP_WORKTREE/.git" ]; then
+  say "first build — creating the worktree" >&2
+  rm -rf "$APP_WORKTREE"
+  git clone --quiet --shared "$APP_MIRROR" "$APP_WORKTREE"
+fi
+git -C "$APP_WORKTREE" fetch --quiet origin
+# Hard reset and a clean sweep, because a build has to describe the commit and
+# nothing else: a file left behind by an earlier branch would otherwise be
+# baked into the image with no trace of where it came from.
+git -C "$APP_WORKTREE" reset --quiet --hard "$app_sha"
+git -C "$APP_WORKTREE" clean -qfdx
+say "worktree at $(git -C "$APP_WORKTREE" rev-parse --short=7 HEAD)" >&2
+
+if [ "$print_migration" -eq 1 ]; then
+  # Highest numbered migration in the tree. Printed on stdout alone, so the
+  # caller can read it while the progress above goes to stderr.
+  ls "$APP_WORKTREE/server/db/migrations/" 2>/dev/null \
+    | sed -n 's/^0*\([0-9]\{1,\}\)_.*\.sql$/\1/p' \
+    | sort -n | tail -1 | grep . || echo 0
+  exit 0
+fi
+
+short="$(git -C "$APP_WORKTREE" rev-parse --short=7 "$app_sha")"
+build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+build_one() { # image dockerfile context
+  local image="$1" dockerfile="$2" context="$3" ref
+  ref="$(image_ref "$image" "$app_sha")"
+  if podman image exists "$ref"; then
+    say "$image — already built"
+    return 0
+  fi
+  step "building $image"
+  podman build \
+    --tag "$ref" \
+    --file "$APP_WORKTREE/$dockerfile" \
+    --build-arg "VERSION=$short" \
+    --build-arg "GIT_COMMIT=$app_sha" \
+    --build-arg "BUILD_TIME=$build_time" \
+    "$APP_WORKTREE/$context"
+}
+
+build_one chatgamelab-db      docker/db/Dockerfile .
+build_one chatgamelab-backend server/Dockerfile    .
+build_one chatgamelab-web     web/Dockerfile       web
+
+# Neither user can read the other's image store, so the handoff is a file.
+# Written to a temp name and moved into place, so cgl-deploy never loads a
+# half-written archive.
+archive="$HANDOFF_DIR/$app_sha.tar"
+if [ ! -f "$archive" ]; then
+  step "saving for handoff"
+  refs=""
+  for image in $IMAGE_NAMES; do refs="$refs $(image_ref "$image" "$app_sha")"; done
+  # shellcheck disable=SC2086
+  podman save --multi-image-archive --output "$archive.part" $refs
+  mv "$archive.part" "$archive"
+  say "$(du -h "$archive" | cut -f1) at $archive"
+fi

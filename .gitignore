@@ -1,0 +1,5 @@
+*.retry
+
+# The bare mirror deploy.sh resolves refs against. Rebuilt on demand; a clone
+# is not repository content.
+.cache/

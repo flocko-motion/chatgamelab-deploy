@@ -1,0 +1,29 @@
+# Managed by ansible (roles/webhook).
+[Unit]
+Description=chatgamelab deploy trigger listener
+After=network.target
+
+[Service]
+# Unprivileged, and the same account that owns the stack — it needs to write
+# one file into {{ hook_runtime_dir }} and read the secret, nothing more.
+User={{ runtime_user }}
+Group={{ runtime_user }}
+ExecStart=/usr/local/bin/cgl-deploy-hook
+Restart=always
+RestartSec=2
+
+# It parses no input and touches two paths, so it is given nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{ hook_runtime_dir }}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

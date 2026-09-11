@@ -1,0 +1,59 @@
+# cgl.fmnoel.de — the development instance.
+#
+# Every value here is public: an Auth0 domain, audience and client identifier
+# are shipped to the browser in the frontend bundle by design, and a Sentry DSN
+# is a write-only ingest URL. The two values that are secret (the Postgres
+# password, and the admin address that bootstraps a reset database) are never
+# in this repository — the first is generated on the box, the second is given
+# to ./deploy.sh at the moment it can act (see --reset-db).
+# The domain is the file name and the inventory host name, so it is
+# inventory_hostname everywhere in the roles rather than a variable that could
+# disagree with either.
+certbot_email: webmaster@omnitopos.net
+
+# The Auth0 application serving this origin, in its own Auth0 account.
+#
+# Dev and prod deliberately do not share an account, a tenant, or an audience
+# identifier: prod is expected to pass to JFF, and an account is the unit that
+# can actually be handed over. Sharing any of the three would couple this
+# instance to whoever ends up owning that one. So every value below is
+# per-instance, and prod's equivalents will come from its own owner.
+#
+# The application is a Single Page Application — a public client on PKCE, which
+# is what the code expects: the backend holds no client secret and verifies
+# tokens against the tenant's published JWKS (server/api/httpx/auth.go:191).
+#
+# Its three URL lists want the callback paths rather than the bare origin,
+# since auth0Config builds them from PUBLIC_URL (web/src/config/auth0.ts:8):
+#
+#   Allowed Callback URLs   https://cgl.fmnoel.de/auth/login/auth0/callback
+#   Allowed Logout URLs     https://cgl.fmnoel.de/auth/logout/auth0/callback
+#   Allowed Web Origins     https://cgl.fmnoel.de
+#
+# The audience is an API defined in that same tenant. Its identifier is an
+# arbitrary stable string that the frontend requests and the backend compares
+# `aud` against (server/api/httpx/auth.go:197) — nothing here ever calls Auth0's
+# Management API, so pointing the audience at /api/v2/ (as the old shared
+# instance did) minted tokens nominally scoped to Auth0's own admin surface for
+# no reason.
+auth0_domain: dev-txs0-7xb.eu.auth0.com
+# Deliberately the same string as API_BASE_URL, which is a coincidence of
+# naming rather than a coupling: an audience is an opaque label Auth0 never
+# visits, and the backend only compares the token's `aud` against it
+# (server/api/httpx/auth.go:197).
+auth0_audience: https://cgl.fmnoel.de/api
+auth0_client_id: LZW4vchTZBfQhYpXplZB5TtNXgyRSVfm
+
+# Sentry/GlitchTip. Empty disables reporting on that side.
+sentry_dsn_backend: ""
+sentry_dsn_frontend: ""
+
+# DEV_MODE is on here and DEV_JWT_SECRET is unset; see the reasoning in
+# roles/cgl_box/templates/env.config.j2, which is where both are set. Neither
+# belongs in this file: the pairing is a property of the deployment rather than
+# of the instance, and getting it wrong on any instance is a full compromise.
+
+# The branch this box follows when nobody is driving. Every merge to it is
+# built and deployed, by the trigger if CI reaches the box and by the timer
+# otherwise. ./deploy.sh <commit> overrides it until the next tick.
+track_branch: development

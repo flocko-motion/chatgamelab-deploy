@@ -1,0 +1,11 @@
+---
+# Pinned as a floor, not an exact version: the constraint is what makes
+# `ansible-galaxy collection install` act at all — without one it finds the
+# distro's own copy under /usr/lib/python3/dist-packages, calls the requirement
+# met, and installs nothing, so the version in play is whatever that machine
+# happened to ship.
+collections:
+  - name: ansible.posix # synchronize, authorized_key
+    version: ">=2.2.2"
+  - name: community.general # ufw
+    version: ">=12.1.0"

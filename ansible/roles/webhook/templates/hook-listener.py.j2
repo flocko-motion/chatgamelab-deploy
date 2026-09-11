@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Managed by ansible (roles/webhook) — edits here are overwritten.
+
+The public trigger endpoint. It authenticates the caller and then does one
+thing: touch the file the update unit watches. The body is read only to be
+hashed and is never parsed, and every accepted request has the identical
+effect — so a forged or replayed trigger buys an attacker one convergence onto
+the branch the box already tracks. What gets deployed is never something the
+caller can choose or influence.
+"""
+import hashlib
+import hmac
+import http.server
+import pathlib
+import sys
+
+SECRET_PATH = pathlib.Path("{{ hook_secret_path }}")
+TRIGGER = pathlib.Path("{{ hook_runtime_dir }}/trigger")
+HOOK_PATH = "{{ hook_path }}"
+
+# Comfortably above a release payload, which runs to tens of kilobytes. nginx
+# refuses anything larger before it reaches us; this is the same bound stated
+# where the reading actually happens.
+MAX_BODY = 256 * 1024
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "cgl-deploy-hook"
+    sys_version = ""
+    timeout = 15
+
+    def do_POST(self):
+        if self.path != HOOK_PATH:
+            self.reply(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self.reply(411)
+            return
+        if not 0 <= length <= MAX_BODY:
+            self.reply(413)
+            return
+        body = self.rfile.read(length)
+        if not self.authentic(body):
+            # One answer for a bad signature, a missing header and an
+            # unreadable secret alike, so an unauthenticated caller learns
+            # nothing from it about which of the three it hit.
+            self.reply(403)
+            return
+        try:
+            TRIGGER.write_bytes(b"")
+        except OSError as err:
+            self.log_error("cannot write %s: %s", TRIGGER, err)
+            self.reply(500)
+            return
+        # 202, not 200: the deploy this starts outlives the request by minutes,
+        # so there is nothing yet to report on.
+        self.reply(202)
+
+    def authentic(self, body):
+        # Re-read per request, so rotating the secret takes writing the file
+        # and nothing else: no restart, no deploy.
+        try:
+            secret = SECRET_PATH.read_bytes().strip()
+        except OSError as err:
+            self.log_error("cannot read %s: %s", SECRET_PATH, err)
+            return False
+        if not secret:
+            self.log_error("%s is empty — rejecting every trigger until deploy.sh fills it", SECRET_PATH)
+            return False
+        sent = self.headers.get("X-Hub-Signature-256", "")
+        want = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sent.encode("utf-8", "replace"), want.encode())
+
+    def reply(self, status):
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s\n" % (fmt % args))  # journald stamps the rest
+
+
+if __name__ == "__main__":
+    http.server.ThreadingHTTPServer(("127.0.0.1", {{ hook_port }}), Handler).serve_forever()

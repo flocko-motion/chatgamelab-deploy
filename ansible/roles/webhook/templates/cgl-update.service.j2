@@ -1,0 +1,20 @@
+# Managed by ansible (roles/webhook).
+#
+# What both routes run: the trigger's path unit starts this, and so does the
+# timer. systemd serialises them, so a trigger arriving mid-deploy waits rather
+# than racing — which is the whole reason there is one unit and not two scripts.
+[Unit]
+Description=chatgamelab converge on the tracked branch
+
+[Service]
+Type=oneshot
+User={{ runtime_user }}
+Group={{ runtime_user }}
+# Rootless podman needs this to find its own socket and storage; a system unit
+# gets no XDG_RUNTIME_DIR of its own, and lingering is what keeps the path
+# alive between logins (roles/common).
+Environment=XDG_RUNTIME_DIR=/run/user/{{ runtime_uid }}
+ExecStart={{ deploy_clone }}/box/cgl-update
+# A build is minutes; a build on a cold cache is longer. Generous rather than
+# unbounded, so a wedged run is eventually reclaimed.
+TimeoutStartSec=45min

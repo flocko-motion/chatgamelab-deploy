@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Converge on the tracked branch. This is what both automatic routes run — the
+# trigger's path unit and the fallback timer — through one systemd unit, so
+# they serialise rather than race.
+#
+# It follows a branch, which is the one place a branch rather than a resolved
+# commit decides what runs on the box. ./deploy.sh is the override: it names a
+# commit, and that commit serves until the next tick brings the box back onto
+# the branch.
+. "$(dirname "$0")/lib.sh"
+
+# Consumed first, and before the lock: the file's job is to say "something
+# happened since the last run", and removing it now means a trigger arriving
+# during this run leaves the path unit able to fire again afterwards rather
+# than being swallowed.
+rm -f "$HOOK_RUNTIME_DIR/trigger" 2>/dev/null || true
+
+# systemd already serialises the two routes; this catches a hand-run alongside
+# them. Non-blocking, because a second convergence on the same branch has
+# nothing to add once the first is under way.
+lock="$RUNTIME_HOME/.update.lock"
+exec 9>"$lock"
+if ! flock -n 9; then
+  say "a deploy is already running — leaving it to finish"
+  exit 0
+fi
+
+# Straight from the remote rather than the mirror, since the mirror belongs to
+# the build user and this runs as the runtime user. One network call, and no
+# local state that could be stale.
+step "resolving $TRACK_BRANCH"
+sha="$(git ls-remote "$APP_REPO" "refs/heads/$TRACK_BRANCH" | cut -f1)"
+[ -n "$sha" ] || die "$APP_REPO has no branch $TRACK_BRANCH."
+say "${sha:0:7}"
+
+deployed="$(cat "$RUNTIME_HOME/deployed-ref" 2>/dev/null || true)"
+if [ "$sha" = "$deployed" ]; then
+  say "already at ${sha:0:7} — nothing to do"
+  exit 0
+fi
+if [ -n "$deployed" ]; then
+  say "box is at ${deployed:0:7}, branch has moved"
+else
+  say "box has nothing deployed yet"
+fi
+
+# Asked of the build user because the worktree is the only place the answer
+# lives and only that account can read it. Cheap: a fetch and a checkout, no
+# build.
+step "reading the target's migration mark"
+target_migration="$(sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" \
+  --app-sha "$sha" --print-migration)" \
+  || die "could not prepare the worktree for $sha."
+say "up to $target_migration"
+
+# The deploy repo stays where it is: an automatic run deploys application
+# commits, never a change to the deployment itself. That remains ./deploy.sh's
+# job, and is what keeps a push here from reaching the box on its own.
+exec "$DEPLOY_CLONE/box/cgl-deploy" \
+  --deploy-sha "$(git -C "$DEPLOY_CLONE" rev-parse HEAD)" \
+  --app-sha "$sha" \
+  --target-migration "$target_migration"

@@ -1,0 +1,5 @@
+---
+# Set as a fact by setup-server.yml from the user ansible actually created, so
+# the socket path below is the real uid rather than an assumption. Declared here
+# so a role run in isolation fails loudly instead of templating an empty path.
+runtime_uid: ""

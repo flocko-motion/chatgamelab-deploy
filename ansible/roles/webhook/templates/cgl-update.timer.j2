@@ -1,0 +1,14 @@
+# Managed by ansible (roles/webhook).
+#
+# The reason a lost trigger costs promptness and not a deploy: this asks the
+# same question on a schedule regardless of whether CI ever reached the box.
+[Unit]
+Description=chatgamelab periodic convergence on the tracked branch
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ update_interval }}
+Unit=cgl-update.service
+
+[Install]
+WantedBy=timers.target

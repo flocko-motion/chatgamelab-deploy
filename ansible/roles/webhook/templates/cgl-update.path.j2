@@ -1,0 +1,10 @@
+# Managed by ansible (roles/webhook). Watches the file the listener touches.
+[Unit]
+Description=chatgamelab deploy trigger watch
+
+[Path]
+PathExists={{ hook_runtime_dir }}/trigger
+Unit=cgl-update.service
+
+[Install]
+WantedBy=multi-user.target

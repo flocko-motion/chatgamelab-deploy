@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Brings the secret half of the environment to a state the stack can start
+# from, and reports what it had to do. Two values live here and nowhere else.
+#
+# DB_PASSWORD is generated once and then kept, rather than rotated per run:
+# Postgres reads POSTGRES_PASSWORD only during initdb on an empty volume, so a
+# fresh value on a later run would leave the backend unable to connect. When
+# the stored value and the role disagree, the file is the truth and Postgres is
+# brought to it — which works because `postgres` inside the container
+# authenticates over its own socket with no password at all, so the repair
+# needs no secret and no human.
+#
+# ADMIN_EMAILS is whatever the last --reset-db named, and is inert on a
+# database that already has an admin (server/db/user_roles.go:55).
+. "$(dirname "$0")/lib.sh"
+
+case "${1:-}" in
+  ensure) ;;
+  *) die "usage: cgl-env ensure" ;;
+esac
+
+if [ -z "$(secret_get DB_PASSWORD || true)" ]; then
+  step "database password"
+  say "none stored — generating one"
+  secret_set DB_PASSWORD "$(openssl rand -hex 32)"
+  exit 0
+fi
+
+# Nothing to verify against while the container is down, and nothing to repair
+# either: an initdb that has not happened yet will adopt whatever is stored.
+if ! compose ps --status running --services 2>/dev/null | grep -qx db; then
+  step "database password"
+  say "stored, and the database is down — nothing to verify against yet"
+  exit 0
+fi
+
+step "database password"
+stored="$(secret_get DB_PASSWORD)"
+if compose exec -T -e PGPASSWORD="$stored" db \
+     psql -U chatgamelab -d chatgamelab -c 'select 1' >/dev/null 2>&1; then
+  say "stored password accepted by the running database"
+  exit 0
+fi
+
+say "the stored password is refused — bringing the database to it"
+if compose exec -T -u postgres db \
+     psql -d chatgamelab -c "ALTER ROLE chatgamelab PASSWORD '$stored'" >/dev/null 2>&1; then
+  if compose exec -T -e PGPASSWORD="$stored" db \
+       psql -U chatgamelab -d chatgamelab -c 'select 1' >/dev/null 2>&1; then
+    say "repaired — the role now matches the stored password"
+    exit 0
+  fi
+fi
+
+# A repair that fails means the container is not answering at all, which no
+# password settles. Report it with the logs and change nothing.
+echo >&2
+echo "Could not reach the database as its superuser either, so this is not a" >&2
+echo "password problem. Its last lines:" >&2
+compose logs --tail=30 db 2>&1 | sed 's/^/  /' >&2
+die "" "Nothing has been changed; the box serves what it served before."

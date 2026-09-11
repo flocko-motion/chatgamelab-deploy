@@ -1,0 +1,77 @@
+# Managed by ansible (roles/nginx) — edits here are overwritten, except the TLS
+# directives certbot adds, which it reinstates on the next ./deploy.sh run.
+#
+# The one public entry point. Everything behind it is a rootless container
+# bound to localhost, so this is also the only process on the box listening on
+# a privileged port.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{ inventory_hostname }};
+
+    # certbot --redirect adds the http -> https redirect here.
+
+    location / {
+        # The web container is itself nginx: it serves the React build and
+        # proxies /api/ to the backend on its own internal network, so this
+        # vhost has one upstream rather than two and needs no knowledge of
+        # where the API lives.
+        proxy_pass http://{{ web_bind_address }}:{{ web_bind_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The game stream is server-sent events: buffering it would hold every
+        # token until the response ended, which for a streamed story is the
+        # whole response.
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+
+        # Image generation and audio are slow enough that the default 60s
+        # upstream timeout would cut them off mid-request.
+        proxy_send_timeout 3600s;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    # Generated at container startup from the environment (see the app repo's
+    # web/docker/entrypoint.sh) and holding the public Auth0 identifiers the
+    # frontend needs, so it must never be cached between deploys.
+    location = /env.js {
+        proxy_pass http://{{ web_bind_address }}:{{ web_bind_port }}/env.js;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # The two routes DEV_MODE registers with no authentication whatsoever
+    # (server/api/routes/router.go:81). GET /api/users/{id}/jwt signs a token
+    # for whatever user id the URL names, and POST /api/users/new creates users
+    # — which is enough to squat an address and block a real registration,
+    # since email is unique. Refused here so dev mode's useful half costs
+    # nothing, and refused with 404 so the edge says no more about them than it
+    # would about any absent path.
+    location = /api/users/new { return 404; }
+    location ~ "^/api/users/[^/]+/jwt$" { return 404; }
+
+    # The trigger endpoint CI posts to. The listener behind it binds to
+    # localhost and verifies an HMAC over the raw body, so this location's job
+    # is to cap the body and pass it through unaltered — no buffering games, or
+    # the signature would be computed over something else.
+    location = {{ hook_path }} {
+        proxy_pass http://127.0.0.1:{{ hook_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # The same bound the listener states, enforced before a byte reaches it.
+        client_max_body_size 256k;
+        client_body_buffer_size 256k;
+        proxy_request_buffering on;
+    }
+
+    client_max_body_size 32m;
+
+    # Nothing here needs to advertise which nginx it is.
+    server_tokens off;
+}

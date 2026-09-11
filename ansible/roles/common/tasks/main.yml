@@ -1,0 +1,176 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - needrestart
+      - curl
+      - git
+      - jq
+      # Rootless podman needs these two by name: uidmap provides newuidmap /
+      # newgidmap, without which a user namespace cannot be set up at all, and
+      # passt provides pasta, podman 5's default rootless network backend.
+      - uidmap
+      - passt
+      # flock, for the lock box/cgl-update takes against a hand-run racing the
+      # timer. Present on a normal Debian, named here so a minimal image is
+      # not relied on to have it.
+      - util-linux
+    state: present
+
+# Two unprivileged users, and the reason there are two is that one of them runs
+# other people's code. Building executes the install scripts of 477 npm
+# packages; that happens as build_user, whose namespace can reach neither the
+# running containers nor the database volume — which holds users' own OpenAI
+# keys in plaintext (server/db/schema.sql:202). Rootful Docker offers the same
+# convenience and neither boundary, since the docker group is root-equivalent.
+- name: Create the runtime and build users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    home: "{{ item.home }}"
+    shell: /bin/bash
+    create_home: true
+    system: true
+  loop:
+    - { name: "{{ runtime_user }}", home: "{{ runtime_home }}" }
+    - { name: "{{ build_user }}", home: "{{ build_home }}" }
+
+# Cloud images sometimes ship /etc/subuid empty, and a rootless container
+# without a subordinate range fails with a message about newuidmap that says
+# nothing about the cause. 65536 each, non-overlapping, so neither user's
+# namespace can reach into the other's files even by uid collision.
+- name: Give each user a subordinate uid/gid range
+  ansible.builtin.command: "usermod --add-sub-uids {{ item.base }}-{{ item.base + 65535 }} --add-sub-gids {{ item.base }}-{{ item.base + 65535 }} {{ item.name }}"
+  loop:
+    - { name: "{{ runtime_user }}", base: 200000 }
+    - { name: "{{ build_user }}", base: 300000 }
+  register: subid
+  changed_when: subid.rc == 0
+  failed_when: subid.rc != 0 and 'already' not in (subid.stderr | default(''))
+
+# Their units have to run with nobody logged in, which is what lingering is.
+# Without it `systemctl --user` works over ssh and then every container is
+# killed the moment the session closes.
+# Read back rather than assumed: the socket path the podman role templates is
+# /run/user/<uid>, and a guessed uid is a path that silently does not exist.
+- name: Read the runtime user's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ runtime_user }}"
+
+- name: Hold it where the podman role can reach it
+  ansible.builtin.set_fact:
+    runtime_user_info:
+      uid: "{{ getent_passwd[runtime_user][1] }}"
+
+- name: Enable lingering so user units survive logout
+  ansible.builtin.command: "loginctl enable-linger {{ item }}"
+  loop:
+    - "{{ runtime_user }}"
+    - "{{ build_user }}"
+  changed_when: false
+
+- name: Authorize the deploy keys for the runtime user
+  ansible.posix.authorized_key:
+    user: "{{ runtime_user }}"
+    key: "{{ item }}"
+  loop: "{{ deploy_public_keys }}"
+
+# PasswordAuthentication no is already this image's cloud-init default, and the
+# rest is left to whatever the base image shipped unless pinned here — so a
+# reinstall, or a different provider, is not relying on the same defaults
+# holding by chance.
+# Phase two runs as runtime_user and has to invoke the build as build_user.
+# One command, one target user, no password — and the direction matters: this
+# grants the data-holding account the ability to act as the sandboxed one,
+# which is a downgrade. Nothing here lets build_user become runtime_user, which
+# is the boundary that protects the database.
+- name: Let the runtime user run the build as the build user
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/50-cgl-build
+    content: |
+      {{ runtime_user }} ALL=({{ build_user }}) NOPASSWD: {{ deploy_clone }}/box/cgl-build
+    mode: "0440"
+    validate: /usr/sbin/visudo -csf %s
+
+- name: Harden sshd explicitly
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/99-hardening.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+      MaxAuthTries 3
+      X11Forwarding no
+      AllowTcpForwarding no
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: reload sshd
+
+# Automatic-Reboot below only covers a kernel update, which needs a reboot to
+# matter. A patched-but-unrestarted nginx stays on the old code in memory
+# otherwise; automatic mode restarts affected services instead of waiting for
+# the 3am window.
+- name: Auto-restart services after unattended-upgrades patches them
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/50-autorestart.conf
+    content: |
+      $nrconf{restart} = 'a';
+    mode: "0644"
+
+# Debian persists journal logs across reboots only if this directory exists at
+# journald startup — otherwise every reboot, the nightly one included, silently
+# drops the log of what happened before it.
+- name: Ensure journald logs persist across reboots
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    mode: "0755"
+  notify: restart journald
+
+- name: Allow SSH, HTTP and HTTPS through ufw
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+  loop: ["22", "80", "443"]
+
+- name: Enable ufw, default deny incoming
+  community.general.ufw:
+    state: enabled
+    policy: deny
+
+- name: Enable unattended-upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+    mode: "0644"
+
+# Pins the upgrade behaviour rather than trusting the package's own default:
+# this file, not 20auto-upgrades, decides which origins are covered and whether
+# a kernel update takes a reboot. The stack comes back on its own afterwards,
+# since the user units are enabled and lingering.
+- name: Configure unattended-upgrades — security origins, auto-reboot off-peak
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    content: |
+      Unattended-Upgrade::Origins-Pattern {
+              "origin=Debian,codename=${distro_codename},label=Debian";
+              "origin=Debian,codename=${distro_codename},label=Debian-Security";
+              "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+      };
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "03:00";
+    mode: "0644"

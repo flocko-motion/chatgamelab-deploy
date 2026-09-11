@@ -1,0 +1,51 @@
+---
+- name: Install nginx and certbot
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+    state: present
+
+- name: Template the vhost
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ inventory_hostname }}.conf"
+    mode: "0644"
+  notify: reload nginx
+
+- name: Enable the site
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ inventory_hostname }}.conf"
+    dest: "/etc/nginx/sites-enabled/{{ inventory_hostname }}.conf"
+    state: link
+  notify: reload nginx
+
+- name: Remove the default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Ensure nginx is enabled and running
+  ansible.builtin.systemd_service:
+    name: nginx
+    enabled: true
+    state: started
+
+- name: Flush handlers so nginx serves plain HTTP before certbot runs
+  ansible.builtin.meta: flush_handlers
+
+# Idempotent — certbot skips issuance while the certificate is still valid. It
+# edits the vhost in place to add the TLS directives, which the template above
+# overwrites on the next run; that is why this task sits in the same play, and
+# why ./deploy.sh probes https afterwards rather than trusting that it did.
+- name: Issue or renew the TLS certificate
+  ansible.builtin.command:
+    cmd: >
+      certbot --nginx
+      -d {{ inventory_hostname }}
+      --non-interactive --agree-tos -m {{ certbot_email }}
+      --redirect
+  register: certbot_result
+  changed_when: "'Certificate not yet due for renewal' not in certbot_result.stdout"
