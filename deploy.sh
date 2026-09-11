@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ./deploy.sh <server> <commit> [--reset-db <admin-email>]
+# ./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
 #
 # Deploys one commit of chatgamelab to one v-server. <commit> is anything git
 # can resolve — a branch, a tag, a short or full SHA — and it is resolved here,
@@ -33,12 +33,15 @@ die() { printf '%s\n' "$@" >&2; exit 1; }
 
 usage() {
   cat >&2 <<'USAGE'
-usage: ./deploy.sh <server> <commit> [--reset-db <admin-email>]
+usage: ./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
 
   <server>   the domain of an instance (e.g. cgl.fmnoel.de), which is also
              its ansible/host_vars/<server>.yml and its inventory line
   <commit>   a branch, tag, or commit SHA in the chatgamelab repository
   --reset-db destroys the database and makes <admin-email> its first admin
+  --force-rebuild
+             build the images again even though this commit has been built
+             here before — for when the recipe moved rather than the source
 
 examples:
   ./deploy.sh cgl.fmnoel.de development
@@ -103,7 +106,7 @@ require_tools
 
 # ---------------------------------------------------------------- arguments
 
-server=""; commit=""; reset_db=0; admin_email=""
+server=""; commit=""; reset_db=0; admin_email=""; force_rebuild=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --reset-db)
@@ -111,6 +114,7 @@ while [ $# -gt 0 ]; do
       [ $# -gt 0 ] || die "--reset-db needs the address that becomes admin."
       admin_email="$1"; reset_db=1
       ;;
+    --force-rebuild) force_rebuild=1 ;;
     -h|--help) usage ;;
     -*) die "Unknown option: $1" "" "$(usage 2>&1)" ;;
     *)
@@ -539,6 +543,7 @@ set -- "$deploy_clone_remote/box/cgl-deploy" \
   --app-sha "$sha" \
   --target-migration "$target_migration"
 [ "$reset_db" -eq 1 ] && set -- "$@" --reset-db "$admin_email"
+[ "$force_rebuild" -eq 1 ] && set -- "$@" --force-rebuild
 
 # -t so the box's progress arrives as it happens rather than in one lump at the
 # end: a build is minutes long and watching it is the point.

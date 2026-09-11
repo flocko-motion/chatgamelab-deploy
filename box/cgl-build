@@ -14,10 +14,16 @@
 # image built here is the same recipe CI would have used.
 . "$(dirname "$0")/lib.sh"
 
-app_sha=""; print_migration=0
+app_sha=""; print_migration=0; force=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --app-sha) shift; app_sha="${1:-}" ;;
+    # Build even though an image for this commit is already in the store.
+    # Images are keyed by the application commit alone, so a change to how they
+    # are built — a build argument, a Dockerfile fix, the version string — does
+    # not invalidate them: the cache is correct about the source and blind to
+    # the recipe. This is how you say the recipe moved.
+    --force-rebuild) force=1 ;;
     # Prepares the worktree and reports its migration high-water mark, without
     # building. cgl-update needs that number before it can decide whether a
     # deploy is safe, and this user is the only one that can read the tree.
@@ -26,7 +32,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$app_sha" ] || die "usage: cgl-build --app-sha <sha> [--print-migration]"
+[ -n "$app_sha" ] || die "usage: cgl-build --app-sha <sha> [--print-migration] [--force-rebuild]"
 
 [ "$(id -un)" = "$BUILD_USER" ] \
   || die "cgl-build runs as $BUILD_USER and is running as $(id -un)."
@@ -91,7 +97,7 @@ say "version $version" >&2
 build_one() { # image dockerfile context
   local image="$1" dockerfile="$2" context="$3" ref
   ref="$(image_ref "$image" "$app_sha")"
-  if podman image exists "$ref"; then
+  if [ "$force" -eq 0 ] && podman image exists "$ref"; then
     say "$image — already built"
     return 0
   fi
@@ -113,7 +119,9 @@ build_one chatgamelab-web     web/Dockerfile       web
 # Written to a temp name and moved into place, so cgl-deploy never loads a
 # half-written archive.
 archive="$HANDOFF_DIR/$app_sha.tar"
-if [ ! -f "$archive" ]; then
+# Rewritten under --force-rebuild: a leftover archive from an earlier build of
+# the same commit holds the images this run just replaced.
+if [ "$force" -eq 1 ] || [ ! -f "$archive" ]; then
   step "saving for handoff"
   refs=""
   for image in $IMAGE_NAMES; do refs="$refs $(image_ref "$image" "$app_sha")"; done

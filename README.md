@@ -5,12 +5,13 @@ one instance per v-server, built on the box from source, run rootless under
 podman behind native nginx.
 
 ```
-./deploy.sh <server> <commit> [--reset-db <admin-email>]
+./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
 
 ./deploy.sh cgl.fmnoel.de development
 ./deploy.sh cgl.fmnoel.de v1.56.0
 ./deploy.sh cgl.fmnoel.de 68b1744
 ./deploy.sh cgl.fmnoel.de engineV2 --reset-db you@example.com
+./deploy.sh cgl.fmnoel.de development --force-rebuild
 ```
 
 `<server>` is a domain, and it is the whole address of an instance: the file
@@ -33,6 +34,12 @@ versions costs no network.
 
 A deploy is therefore minutes rather than seconds. That is the trade, and it
 was chosen deliberately.
+
+Images are keyed by the application commit alone, so changing *how* they are
+built — a build argument, a Dockerfile fix, the version string — leaves the
+existing image in place: the cache is correct about the source and blind to the
+recipe. `--force-rebuild` is how you say the recipe moved. The layer cache
+still applies, so it is far cheaper than a first build.
 
 ## Why rootless
 

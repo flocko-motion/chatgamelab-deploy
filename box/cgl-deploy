@@ -10,9 +10,10 @@
 # with its data intact, which a destroy-first ordering would not.
 . "$(dirname "$0")/lib.sh"
 
-deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""
+deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""; force_rebuild=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --force-rebuild)    force_rebuild=1 ;;
     --deploy-sha)       shift; deploy_sha="${1:-}" ;;
     --app-sha)          shift; app_sha="${1:-}" ;;
     --target-migration) shift; target_migration="${1:-}" ;;
@@ -56,14 +57,21 @@ have_all_images() {
 }
 
 step "images for $short"
-if have_all_images; then
+if [ "$force_rebuild" -eq 0 ] && have_all_images; then
   say "already in the local store — no build needed"
 else
-  say "not built here yet"
+  if [ "$force_rebuild" -eq 1 ]; then
+    say "rebuilding on request, whatever is in the store"
+  else
+    say "not built here yet"
+  fi
   # The one sudoers entry on the box (/etc/sudoers.d/50-cgl-build). The build
   # runs as a user that can reach neither the containers nor the database
   # volume, because it is the step that executes other people's code.
-  sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" --app-sha "$app_sha"
+  build_args="--app-sha $app_sha"
+  [ "$force_rebuild" -eq 1 ] && build_args="$build_args --force-rebuild"
+  # shellcheck disable=SC2086
+  sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" $build_args
 
   archive="$HANDOFF_DIR/$app_sha.tar"
   [ -f "$archive" ] || die "the build reported success and left no archive at $archive."
