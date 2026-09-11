@@ -1,4 +1,4 @@
-# cgl.fmnoel.de — the development instance.
+# dev.cgl.fmnoel.de — the development instance.
 #
 # Every value here is public: an Auth0 domain, audience and client identifier
 # are shipped to the browser in the frontend bundle by design, and a Sentry DSN
@@ -26,9 +26,9 @@ certbot_email: webmaster@omnitopos.net
 # Its three URL lists want the callback paths rather than the bare origin,
 # since auth0Config builds them from PUBLIC_URL (web/src/config/auth0.ts:8):
 #
-#   Allowed Callback URLs   https://cgl.fmnoel.de/auth/login/auth0/callback
-#   Allowed Logout URLs     https://cgl.fmnoel.de/auth/logout/auth0/callback
-#   Allowed Web Origins     https://cgl.fmnoel.de
+#   Allowed Callback URLs   https://dev.cgl.fmnoel.de/auth/login/auth0/callback
+#   Allowed Logout URLs     https://dev.cgl.fmnoel.de/auth/logout/auth0/callback
+#   Allowed Web Origins     https://dev.cgl.fmnoel.de
 #
 # The audience is an API defined in that same tenant. Its identifier is an
 # arbitrary stable string that the frontend requests and the backend compares
@@ -37,10 +37,10 @@ certbot_email: webmaster@omnitopos.net
 # instance did) minted tokens nominally scoped to Auth0's own admin surface for
 # no reason.
 auth0_domain: dev-txs0-7xb.eu.auth0.com
-# Deliberately the same string as API_BASE_URL, which is a coincidence of
-# naming rather than a coupling: an audience is an opaque label Auth0 never
-# visits, and the backend only compares the token's `aud` against it
-# (server/api/httpx/auth.go:197).
+# Named for the domain this instance had when the API was created, and left
+# alone: an audience is an opaque label Auth0 never visits, the backend only
+# compares the token's `aud` against it (server/api/httpx/auth.go:197), and an
+# API identifier cannot be changed after creation.
 auth0_audience: https://cgl.fmnoel.de/api
 auth0_client_id: LZW4vchTZBfQhYpXplZB5TtNXgyRSVfm
 

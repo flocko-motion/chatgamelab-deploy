@@ -427,12 +427,16 @@ require_box_supported() { # blob
   # box wants ~1.9 GB, and one that only pulls needs enough to run the stack,
   # which idles at 751 MB.
   if [ "$image_source" = "build" ]; then
-    if [ "$mem_mb" -lt 1900 ]; then
+    if [ "$mem_mb" -lt 1700 ]; then
       die "${mem_mb} MB of RAM, and building here peaks around 1.7 GB." \
           "" \
           "Either give this instance a bigger box, or set image_source:" \
           "registry in ansible/host_vars/$server.yml so it pulls what CI" \
-          "published instead of compiling."
+          "published instead of compiling." \
+          "" \
+          "The floor is the measured peak (1636 MB for a full three-image" \
+          "rebuild, stack included) rather than a guess, so a box under it" \
+          "will not finish a build however long it is given."
     fi
     if [ "$mem_mb" -lt 2600 ]; then
       echo "   note: ${mem_mb} MB leaves the build about $((mem_mb - 1700)) MB spare — swap will be used"

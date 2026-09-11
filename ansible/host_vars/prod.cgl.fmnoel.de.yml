@@ -1,0 +1,41 @@
+# prod.cgl.fmnoel.de — production.
+#
+# It pulls the images CI published rather than building them, so it runs the
+# artefact that was tested and carries no toolchain, no build user and no
+# source mirror. ./deploy.sh will only deploy a published release tag here.
+#
+# Expected to pass to JFF. Every value below therefore belongs to whoever owns
+# this instance rather than to the development one: its own Auth0 account, its
+# own audience, its own contact address. Nothing is shared between the two, so
+# handing this over needs no rotation anywhere else.
+certbot_email: PUT_THE_PROD_CONTACT_ADDRESS_HERE
+
+# Production's own Auth0 account — deliberately not the development tenant, so
+# an account that changes hands takes nothing of the other with it. A Single
+# Page Application (public client, PKCE: the backend holds no secret and
+# verifies against the published JWKS), plus an API whose identifier is the
+# audience, signing RS256.
+#
+#   Allowed Callback URLs   https://prod.cgl.fmnoel.de/auth/login/auth0/callback
+#   Allowed Logout URLs     https://prod.cgl.fmnoel.de/auth/logout/auth0/callback
+#   Allowed Web Origins     https://prod.cgl.fmnoel.de
+#
+# Under Application Access Policy, User-delegated Access is the one to
+# authorize; Client Access stays unauthorized, since nothing here does
+# machine-to-machine.
+auth0_domain: PUT_THE_PROD_TENANT_DOMAIN_HERE
+auth0_audience: PUT_THE_PROD_API_IDENTIFIER_HERE
+auth0_client_id: PUT_THE_PROD_SPA_CLIENT_ID_HERE
+
+# Sentry/GlitchTip. Empty disables reporting on that side.
+sentry_dsn_backend: ""
+sentry_dsn_frontend: ""
+
+# Pulled, not built. A released version is what production runs, and naming one
+# is a deliberate act: ./deploy.sh refuses a ref here that carries no vX.Y.Z
+# tag, and checks the registry holds all three images before touching the box.
+image_source: registry
+
+# No track_branch, deliberately. Nothing converges on production by itself —
+# there is no branch to follow, no trigger, and no timer. A release goes live
+# because somebody ran ./deploy.sh naming it.
