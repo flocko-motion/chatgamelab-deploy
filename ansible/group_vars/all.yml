@@ -27,6 +27,16 @@ ansible_python_interpreter: /usr/bin/python3
 # cheaper and more constrained of the two.
 image_source: registry
 
+# Development mode, per host and defaulting to off — because the cost of
+# getting it wrong is asymmetric. It gives debug logging and db.Preseed's
+# well-known dev accounts, and it registers two routes with no authentication
+# at all (server/api/routes/router.go:81), one of which signs a token for
+# whatever user id the URL names.
+#
+# Put in the shared template once, it put nine @dev.local accounts into
+# production. An instance that wants it says so.
+dev_mode: false
+
 # Read only when image_source is "registry". Public, so the box pulls with no
 # credential of any kind.
 image_registry: ghcr.io/flocko-motion
