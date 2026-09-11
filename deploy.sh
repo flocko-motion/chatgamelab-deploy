@@ -48,6 +48,9 @@ usage: ./deploy.sh <server> [commit] [--reset-db <admin-email>] [--force-rebuild
   --restore <dump.sql.gz>
              replace the database with a dump, loading it before the backend
              starts so its own migrations carry it forward
+  --restore-latest
+             the same, with the newest dump at this instance's own backup
+             destination — fetched by the box, so it never travels via here
 
 examples:
   ./deploy.sh dev.cgl.fmnoel.de                    # its own default_ref
@@ -116,7 +119,7 @@ require_tools
 
 # ---------------------------------------------------------------- arguments
 
-server=""; commit=""; reset_db=0; admin_email=""; force_rebuild=0; restore_file=""
+server=""; commit=""; reset_db=0; admin_email=""; force_rebuild=0; restore_file=""; restore_latest=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --reset-db)
@@ -130,6 +133,7 @@ while [ $# -gt 0 ]; do
       [ $# -gt 0 ] || die "--restore needs the dump to load."
       restore_file="$1"
       ;;
+    --restore-latest) restore_latest=1 ;;
     -h|--help) usage ;;
     -*) die "Unknown option: $1" "" "$(usage 2>&1)" ;;
     *)
@@ -146,7 +150,10 @@ done
 # One empties the database and names who gets into what replaces it; the other
 # brings a database that already has its own admins. Asking for both says two
 # incompatible things about the same volume.
-if [ "$reset_db" -eq 1 ] && [ -n "$restore_file" ]; then
+if [ -n "$restore_file" ] && [ "$restore_latest" -eq 1 ]; then
+  die "--restore names a dump and --restore-latest finds one; pick one."
+fi
+if [ "$reset_db" -eq 1 ] && { [ -n "$restore_file" ] || [ "$restore_latest" -eq 1 ]; }; then
   die "--reset-db and --restore both replace the database, differently." \
       "" \
       "A restored dump carries its own accounts, so it needs no bootstrap" \
@@ -822,6 +829,7 @@ set -- "$deploy_clone_remote/box/cgl-deploy" \
 [ "$force_rebuild" -eq 1 ] && set -- "$@" --force-rebuild
 [ -n "$image_tag" ] && set -- "$@" --image-tag "$image_tag"
 [ -n "$remote_restore" ] && set -- "$@" --restore "$remote_restore"
+[ "$restore_latest" -eq 1 ] && set -- "$@" --restore-latest
 
 # -t so the box's progress arrives as it happens rather than in one lump at the
 # end: a build is minutes long and watching it is the point.

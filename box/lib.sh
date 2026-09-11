@@ -85,3 +85,15 @@ compose() {
     --env-file "$ENV_SECRET" \
     "$@"
 }
+
+# The backup destination, as box/cgl-secrets stored it. Commands on stdin.
+BACKUP_KEY="$RUNTIME_HOME/backup_key"
+sftp_at() {
+  local bhost bport buser
+  bhost="$(secret_get BACKUP_SSH_HOST)"
+  bport="$(secret_get BACKUP_SSH_PORT)"; bport="${bport:-22}"
+  buser="$(secret_get BACKUP_SSH_USER)"
+  [ -n "$bhost" ] && [ -n "$buser" ] || return 1
+  sftp -b - -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 \
+    -i "$BACKUP_KEY" -P "$bport" "$buser@$bhost" 2>&1
+}
