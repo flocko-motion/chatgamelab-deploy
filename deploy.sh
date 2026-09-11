@@ -50,10 +50,11 @@ usage: ./deploy.sh <server> [commit] [--reset-db <admin-email>] [--force-rebuild
              starts so its own migrations carry it forward
 
 examples:
-  ./deploy.sh cgl.fmnoel.de development
-  ./deploy.sh cgl.fmnoel.de v1.56.0
-  ./deploy.sh cgl.fmnoel.de 68b1744
-  ./deploy.sh cgl.fmnoel.de engineV2 --reset-db you@example.com
+  ./deploy.sh dev.cgl.fmnoel.de                    # its own default_ref
+  ./deploy.sh dev.cgl.fmnoel.de engineV2           # a branch CI never builds
+  ./deploy.sh dev.cgl.fmnoel.de 68b1744 --force-rebuild
+  ./deploy.sh prod.cgl.fmnoel.de v1.57.0
+  ./deploy.sh prod.cgl.fmnoel.de --restore ~/cgl-prod.sql.gz
 USAGE
   exit 2
 }
