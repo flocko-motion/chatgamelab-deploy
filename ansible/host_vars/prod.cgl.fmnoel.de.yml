@@ -30,9 +30,16 @@ certbot_email: webmaster@omnitopos.net
 # This host is a rehearsal: run.chatgamelab.eu is where production lands, and
 # that is a second host_vars file rather than a rename — a different
 # certificate, vhost and callback list against the same box.
-auth0_domain: PUT_THE_PROD_TENANT_DOMAIN_HERE
-auth0_audience: PUT_THE_PROD_API_IDENTIFIER_HERE
-auth0_client_id: PUT_THE_PROD_SPA_CLIENT_ID_HERE
+auth0_domain: chatgamelab.eu.auth0.com
+# The tenant's Management API, which is what production has always used.
+# Every tenant has it pre-associated with its applications, so it needs no
+# Application Access Policy grant — convenient here, and the reason the
+# rehearsal will not hit the authorisation error dev did. Worth replacing with
+# a dedicated API eventually: nothing in this codebase calls the Management
+# API, so the tokens are nominally scoped to Auth0's own admin surface for no
+# reason. Not while a migration is in flight.
+auth0_audience: https://chatgamelab.eu.auth0.com/api/v2/
+auth0_client_id: UqajOgWm3xl92J4lxZnjlZw14mOXtEJm
 
 # Sentry/GlitchTip. Empty disables reporting on that side.
 sentry_dsn_backend: ""
