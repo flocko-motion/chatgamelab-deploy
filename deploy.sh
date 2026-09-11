@@ -635,26 +635,51 @@ printf '   %s' "$backup_prompt"
 read -r answer
 case "$answer" in
   y|Y)
-    printf '   SFTP host: ';            read -r b_host
-    printf '   SFTP port [22]: ';       read -r b_port
-    printf '   SFTP user: ';            read -r b_user
-    printf '   remote path [backups]: '; read -r b_path
-    printf '   private key file: ';     read -r b_key
+    # Offered back, so correcting one value costs one value rather than five.
+    current="$(ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' show" 2>/dev/null || true)"
+    cur() { printf '%s\n' "$current" | sed -n "s/^$1=//p" | head -1; }
+
+    ask() { # prompt current-value fallback -> answer on stdout
+      local prompt="$1" cur="$2" fallback="${3:-}" shown answer
+      shown="${cur:-$fallback}"
+      if [ -n "$shown" ]; then printf '   %s [%s]: ' "$prompt" "$shown" >&2
+      else printf '   %s: ' "$prompt" >&2; fi
+      read -r answer
+      printf '%s' "${answer:-$shown}"
+    }
+
+    b_host="$(ask 'SFTP host'   "$(cur BACKUP_SSH_HOST)")"
+    b_port="$(ask 'SFTP port'   "$(cur BACKUP_SSH_PORT)" 22)"
+    b_user="$(ask 'SFTP user'   "$(cur BACKUP_SSH_USER)")"
+    b_path="$(ask 'remote path' "$(cur BACKUP_PATH)" backups)"
+
+    have_key="$(cur HAS_KEY)"
+    if [ -n "$have_key" ]; then
+      printf '   private key file [keep the one on the box, %s]: ' "$have_key"
+    else
+      printf '   private key file: '
+    fi
+    read -r b_key
+
     [ -n "$b_host" ] && [ -n "$b_user" ] \
       || die "host and user are both needed; nothing has been changed."
+    [ -n "$b_key" ] || [ -n "$have_key" ] \
+      || die "there is no key on the box to keep, so one is needed here."
 
     # read does no expansion, so a path typed with a ~ arrives literally.
     case "$b_key" in
       "~") b_key="$HOME" ;;
       "~/"*) b_key="$HOME/${b_key#\~/}" ;;
     esac
-    [ -r "$b_key" ] || die "cannot read $b_key; nothing has been changed."
+    if [ -n "$b_key" ]; then
+      [ -r "$b_key" ] || die "cannot read $b_key; nothing has been changed."
+    fi
 
     # ssh refuses a private key others can read, and says so in a banner that
     # looks like a different problem entirely — so it is caught here, where the
     # answer is one keystroke. scp brings a loose mode across, which is how a
     # key copied from another host usually arrives.
-    if [ "$(( 8#$(file_mode "$b_key") & 8#77 ))" -ne 0 ]; then
+    if [ -n "$b_key" ] && [ "$(( 8#$(file_mode "$b_key") & 8#77 ))" -ne 0 ]; then
       echo "   $b_key is mode $(file_mode "$b_key"), which ssh refuses —"
       echo "   and which lets anyone on this machine read it."
       printf '   chmod 600 it? [Y/n] '
@@ -665,7 +690,7 @@ case "$answer" in
       esac
     fi
 
-    ssh-keygen -y -f "$b_key" >/dev/null 2>&1 \
+    [ -z "$b_key" ] || ssh-keygen -y -f "$b_key" >/dev/null 2>&1 \
       || die "ssh cannot read $b_key as a private key." \
              "" \
              "If it is passphrase-protected, the database container cannot use" \
@@ -673,7 +698,10 @@ case "$answer" in
              "public half on the destination."
 
     # base64 because an env file has no multi-line values, and -w0 is GNU-only.
-    key_b64="$(base64 -w0 < "$b_key" 2>/dev/null || base64 < "$b_key" | tr -d '\n')"
+    # Left empty when the answer was blank: cgl-secrets writes the key only
+    # when it is given one, so the box keeps what it already holds.
+    key_b64=""
+    [ -z "$b_key" ] || key_b64="$(base64 -w0 < "$b_key" 2>/dev/null || base64 < "$b_key" | tr -d '\n')"
     # Piped straight over ssh rather than written anywhere here: the key never
     # touches this machine's disk outside the file it already lives in.
     {
@@ -682,7 +710,7 @@ case "$answer" in
       printf 'BACKUP_SSH_PORT=%s\n' "${b_port:-22}"
       printf 'BACKUP_SSH_USER=%s\n' "$b_user"
       printf 'BACKUP_PATH=%s\n' "${b_path:-backups}"
-      printf 'BACKUP_SSH_KEY_B64=%s\n' "$key_b64"
+      [ -z "$key_b64" ] || printf 'BACKUP_SSH_KEY_B64=%s\n' "$key_b64"
     } | ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$runtime_home/secrets.env'"
     ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
       || die "The box refused the backup destination; nothing has been deployed."
