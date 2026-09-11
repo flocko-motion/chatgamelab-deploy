@@ -78,7 +78,7 @@
 - name: Template the paths phase two works with
   ansible.builtin.template:
     src: box.env.j2
-    dest: "{{ runtime_home }}/box.env"
+    dest: "{{ box_env }}"
     owner: "{{ runtime_user }}"
     group: "{{ runtime_user }}"
     mode: "0644"

@@ -10,6 +10,18 @@
 app_repo: https://github.com/flocko-motion/chatgamelab.git
 deploy_repo: https://github.com/flocko-motion/chatgamelab-deploy.git
 
+# Headroom for the frontend build, which runs tsc and vite beside Postgres and
+# two containers. 4 GB of swap on a box with 3854 MB of RAM is a safety net
+# rather than working space: swappiness stays low, so this is what stands
+# between a tight build and the OOM killer, and costs nothing on the 111 GB
+# free otherwise.
+swapfile_path: /swapfile
+swapfile_size_mb: 4096
+# Low rather than off: idle pages stay resident, and the file is reached only
+# under real pressure — which is both what a build wants and what Postgres
+# prefers.
+swappiness: 10
+
 # Two unprivileged users, two subuid ranges, and no root anywhere in the
 # picture except nginx's master process and sshd.
 #

@@ -25,6 +25,65 @@
       - util-linux
     state: present
 
+# Swap, because the frontend build is the one thing on this box that can ask
+# for more memory than it has. Created once and then left alone — the guard is
+# the file's existence, so a re-run neither rewrites 4 GB nor re-runs mkswap
+# over a file the kernel is using.
+- name: Check whether the swapfile is already there
+  ansible.builtin.stat:
+    path: "{{ swapfile_path }}"
+  register: swapfile
+
+# fallocate rather than dd: it is instant on ext4, which is what Debian
+# installs by default. On a copy-on-write filesystem (btrfs, zfs) swapon
+# refuses the result and this task is where that would surface — the fix there
+# is a dd-written file with copy-on-write disabled, which no box here uses.
+- name: Allocate the swapfile
+  ansible.builtin.command: "fallocate -l {{ swapfile_size_mb }}M {{ swapfile_path }}"
+  when: not swapfile.stat.exists
+  changed_when: true
+
+# Before mkswap, and before anything can read it: swap holds whatever the
+# kernel evicted, which on this box includes Postgres pages.
+- name: Restrict the swapfile to root
+  ansible.builtin.file:
+    path: "{{ swapfile_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Format it as swap
+  ansible.builtin.command: "mkswap {{ swapfile_path }}"
+  when: not swapfile.stat.exists
+  changed_when: true
+
+# fstab, so it survives the 03:00 reboot unattended-upgrades may take.
+- name: Record it in fstab
+  ansible.posix.mount:
+    path: none
+    src: "{{ swapfile_path }}"
+    fstype: swap
+    opts: sw
+    state: present
+
+- name: Read the swap in use
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: swap_active
+  changed_when: false
+
+- name: Enable it
+  ansible.builtin.command: "swapon {{ swapfile_path }}"
+  when: swapfile_path not in swap_active.stdout
+  changed_when: true
+
+- name: Set swappiness
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ swappiness }}"
+    state: present
+    sysctl_set: true
+    reload: true
+
 # Two unprivileged users, and the reason there are two is that one of them runs
 # other people's code. Building executes the install scripts of 477 npm
 # packages; that happens as build_user, whose namespace can reach neither the
@@ -104,6 +163,29 @@
     - "{{ runtime_user }}"
     - "{{ build_user }}"
   changed_when: false
+
+# A user manager started by an ssh login before lingering existed stays active
+# without bringing up sockets.target, so /run/user/<uid>/bus never appears.
+# podman then cannot reach the user systemd, falls back to
+# --cgroup-manager=cgroupfs, and says so in four warnings per command.
+#
+# Guarded on the bus rather than run unconditionally: restarting the manager
+# takes its containers down with it, which is free on a fresh box and would be
+# an outage on a converged one.
+- name: Check whether each user manager has its session bus
+  ansible.builtin.stat:
+    path: "/run/user/{{ item.uid }}/bus"
+  register: user_bus
+  loop:
+    - { name: "{{ runtime_user }}", uid: "{{ ansible_facts['getent_passwd'][runtime_user][1] }}" }
+    - { name: "{{ build_user }}", uid: "{{ ansible_facts['getent_passwd'][build_user][1] }}" }
+
+- name: Restart the user manager where it is missing
+  ansible.builtin.systemd_service:
+    name: "user@{{ item.item.uid }}.service"
+    state: restarted
+  loop: "{{ user_bus.results }}"
+  when: not item.stat.exists
 
 - name: Authorize the deploy keys for the runtime user
   ansible.posix.authorized_key:

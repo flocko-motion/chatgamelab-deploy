@@ -5,7 +5,7 @@ set -euo pipefail
 
 # Written by ansible from group_vars, so there is one definition of where
 # things live and box/ carries no paths of its own.
-: "${BOX_ENV:=/var/lib/cgl/box.env}"
+: "${BOX_ENV:=/opt/chatgamelab/box.env}"
 [ -r "$BOX_ENV" ] || { echo "cannot read $BOX_ENV — has ground setup run?" >&2; exit 1; }
 # shellcheck disable=SC1090
 . "$BOX_ENV"
