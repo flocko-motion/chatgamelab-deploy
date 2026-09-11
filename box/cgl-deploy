@@ -24,28 +24,23 @@ done
 [ -n "$deploy_sha" ] && [ -n "$app_sha" ] && [ -n "$target_migration" ] \
   || die "usage: cgl-deploy --deploy-sha <sha> --app-sha <sha> --target-migration <n> [--reset-db <email>]"
 
-# ---------------------------------------------------------- self-checkout
+# ------------------------------------------------------------ what is running
 
-# The box runs the deploy repository at the commit ./deploy.sh was run from, so
-# what executes here is what you were looking at there. This script is inside
-# the thing it checks out, so it re-execs itself afterwards — once, guarded, or
-# a mismatch that checkout cannot fix would loop.
-if [ "$(git -C "$DEPLOY_CLONE" rev-parse HEAD)" != "$deploy_sha" ]; then
-  [ -z "${CGL_REEXEC:-}" ] || die "checked out $deploy_sha and HEAD still disagrees — giving up rather than looping."
-  step "checking out the deploy commit"
-  git -C "$DEPLOY_CLONE" fetch --quiet origin
-  # reset --hard rather than checkout: this clone is machine-managed and nobody
-  # edits it, so local drift is something to discard rather than protect. A
-  # checkout refuses to cross it and wedges every deploy until someone logs in
-  # to clean up by hand — which is how a stray chmod over box/ once stopped
-  # this box deploying at all.
-  git -C "$DEPLOY_CLONE" reset --quiet --hard "$deploy_sha" \
-    || die "$deploy_sha is not in $DEPLOY_CLONE — is it pushed?"
-  say "$(git -C "$DEPLOY_CLONE" rev-parse --short=7 HEAD)"
-  CGL_REEXEC=1 exec "$DEPLOY_CLONE/box/cgl-deploy" \
-    --deploy-sha "$deploy_sha" --app-sha "$app_sha" \
-    --target-migration "$target_migration" \
-    $( [ "$reset_db" -eq 1 ] && printf '%s %s' --reset-db "$admin_email" )
+# The commit this repository is at is brought here by ./deploy.sh, over ssh,
+# before this script is invoked — so this only has to confirm it, and a
+# mismatch means something drove it directly rather than through deploy.sh.
+#
+# Verified rather than corrected deliberately: a script that checks out its own
+# replacement and re-execs cannot repair itself when that step is what is
+# broken, and this one wedged the box exactly that way once.
+have="$(git -C "$DEPLOY_CLONE" rev-parse HEAD)"
+if [ "$have" != "$deploy_sha" ]; then
+  die "$DEPLOY_CLONE is at ${have:0:7} and this run expects ${deploy_sha:0:7}." \
+      "" \
+      "./deploy.sh brings the clone to the commit it was run from. Run it" \
+      "rather than calling this directly:" \
+      "" \
+      "  ./deploy.sh $DOMAIN <commit>"
 fi
 
 short="${app_sha}"; short="${short:0:7}"

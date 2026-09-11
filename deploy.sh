@@ -517,6 +517,22 @@ if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --q
   echo "   note: your working tree has uncommitted changes, and the box will run $(git -C "$repo_root" rev-parse --short HEAD)"
 fi
 
+# Brought to that commit from here, rather than by the script inside it: a bug
+# in a self-checkout cannot be fixed by the checkout it broke, and a box wedged
+# that way needed someone to log in and clean up before anything could deploy
+# again. Done from this side, the next deploy repairs it.
+#
+# reset --hard because the clone is machine-managed and nobody edits it, so
+# local drift is to be discarded rather than protected.
+echo ">> bringing the box's clone to $(git -C "$repo_root" rev-parse --short HEAD)"
+ssh $ssh_opts "$runtime_user@$host" \
+  "git -C '$deploy_clone_remote' fetch --quiet origin \
+   && git -C '$deploy_clone_remote' reset --quiet --hard '$self_sha'" \
+  || die "Could not bring $deploy_clone_remote to $self_sha." \
+         "" \
+         "If the clone is missing entirely, re-run with FORCE_SETUP=1 to make" \
+         "ground setup recreate it."
+
 echo ">> phase two on the box"
 set -- "$deploy_clone_remote/box/cgl-deploy" \
   --deploy-sha "$self_sha" \
