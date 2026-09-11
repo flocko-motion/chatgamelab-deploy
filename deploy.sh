@@ -51,6 +51,10 @@ usage: ./deploy.sh <server> [commit] [--reset-db <admin-email>] [--force-rebuild
   --restore-latest
              the same, with the newest dump at this instance's own backup
              destination — fetched by the box, so it never travels via here
+  --configure
+             ask about the things that live on the box rather than in this
+             repository: where backups are written, and where crashes are
+             reported. Without it a deploy only reports their state
 
 examples:
   ./deploy.sh dev.cgl.fmnoel.de                    # its own default_ref
@@ -119,7 +123,7 @@ require_tools
 
 # ---------------------------------------------------------------- arguments
 
-server=""; commit=""; reset_db=0; admin_email=""; force_rebuild=0; restore_file=""; restore_latest=0
+server=""; commit=""; reset_db=0; admin_email=""; force_rebuild=0; restore_file=""; restore_latest=0; configure=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --reset-db)
@@ -134,6 +138,7 @@ while [ $# -gt 0 ]; do
       restore_file="$1"
       ;;
     --restore-latest) restore_latest=1 ;;
+    --configure)      configure=1 ;;
     -h|--help) usage ;;
     -*) die "Unknown option: $1" "" "$(usage 2>&1)" ;;
     *)
@@ -649,17 +654,20 @@ fi
 # in this deployment — the SSH key the database container uploads dumps with —
 # is given here interactively and lives on the box from then on, so it stays in
 # your password manager and never in this repository.
+# Reported on every run, changed only when asked. A deploy is otherwise
+# non-interactive, which is what lets it be piped, scripted, or left to finish
+# a half-hour restore unattended — and it means the state of these is visible
+# every time without anyone having to answer for it.
 echo ">> where backups are written"
 backup_state=0
 ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' check" || backup_state=$?
 
-# Asked only when nobody is being asked to restore. A run that is loading a
-# dump is being told to read one, and stopping it to ask where future ones
-# should be written reads like a question about the restore itself — besides
-# making an otherwise unattended operation wait for a keystroke.
-if [ -n "$restore_file" ] || [ "$restore_latest" -eq 1 ]; then
+echo ">> where crashes are reported"
+ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' telemetry" || true
+
+if [ "$configure" -eq 0 ]; then
   answer=n
-  echo "   left as it is — this run is restoring a dump, not configuring one"
+  [ "$backup_state" -eq 0 ] || echo "   (--configure to change either)"
 else
   case "$backup_state" in
     0) backup_prompt="Change where backups are written? [y/N] " ;;  # configured and working
@@ -770,6 +778,32 @@ case "$answer" in
     ;;
   *) : ;;
 esac
+
+if [ "$configure" -eq 1 ]; then
+  tele="$(ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' show" 2>/dev/null || true)"
+  cur_t() { printf '%s\n' "$tele" | sed -n "s/^$1=//p" | head -1; }
+  printf '   Change where crashes are reported? [y/N] '
+  read -r answer || answer=n
+  case "$answer" in
+    y|Y)
+      # Empty is a valid answer and means off, so this cannot reuse the
+      # keep-on-Enter helper: there has to be a way to say "none".
+      printf '   backend DSN  [%s, "-" for none]: '  "$(cur_t SENTRY_DSN_BACKEND)";  read -r t_back
+      printf '   frontend DSN [%s, "-" for none]: ' "$(cur_t SENTRY_DSN_FRONTEND)"; read -r t_front
+      [ -n "$t_back" ]  || t_back="$(cur_t SENTRY_DSN_BACKEND)"
+      [ -n "$t_front" ] || t_front="$(cur_t SENTRY_DSN_FRONTEND)"
+      [ "$t_back" = "-" ]  && t_back=""
+      [ "$t_front" = "-" ] && t_front=""
+      {
+        printf 'SENTRY_DSN_BACKEND=%s\n'  "$t_back"
+        printf 'SENTRY_DSN_FRONTEND=%s\n' "$t_front"
+      } | ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$runtime_home/secrets.env'"
+      ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" >/dev/null \
+        || echo "   stored anyway"
+      ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' telemetry" || true
+      ;;
+  esac
+fi
 
 # ------------------------------------------------------------- the trigger
 

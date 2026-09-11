@@ -98,6 +98,15 @@ usually the right answer.
 
 There are none in this repository, and that is what lets it be public.
 
+Two things live on the box instead of here, given to `./deploy.sh --configure`
+once: where backups are written, and where crashes are reported. Neither is
+strictly a credential — a Sentry DSN is a write-only ingest URL, and the
+frontend's is served to every visitor in `/env.js` — but both name
+infrastructure belonging to whoever runs the instance, so an instance that
+changes hands points at its new owner's rather than inheriting a file naming
+the old one's. A deploy without `--configure` reports their state and changes
+nothing, which is what keeps it non-interactive.
+
 Every value an instance needs is either public configuration in
 `ansible/host_vars/<domain>.yml` — the Auth0 domain, audience and client id are
 served to every visitor in `/env.js`, and a Sentry DSN is a write-only ingest
