@@ -176,7 +176,8 @@ repository from reaching a box on its own.
 until the next tick brings the box back onto it — so trying something out is
 deliberate and temporary by construction.
 
-See `docs/ci-trigger.md` for the application repository's side.
+See `docs/ci-trigger.md` for the application repository's side, and
+`docs/cutover.md` for moving production here from Coolify.
 
 ## Trust boundaries
 
