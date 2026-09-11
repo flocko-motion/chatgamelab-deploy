@@ -741,15 +741,15 @@ case "$answer" in
     if [ "$generate_key" -eq 1 ]; then
       ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' generate" \
         || die "Could not generate a key on the box."
-      # The destination cannot possibly accept it yet, so installing the rest
-      # is reported rather than fatal: the deploy goes ahead and backups start
-      # working the moment the public half is registered. No re-run needed.
-      ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
-        || echo "   backups wait on that key being registered — nothing else is affected"
-    else
-      ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
-        || die "The box refused the backup destination; nothing has been deployed."
     fi
+
+    # Reported rather than fatal, for the same reason a dead trigger is: what
+    # the deploy is for is the application running, and a destination that
+    # cannot be reached yet does not stop that. The values are stored either
+    # way, so registering the key later needs no re-entry — and every
+    # subsequent run reports the state until it works.
+    ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
+      || echo "   stored anyway — backups start working once the destination accepts the key"
     ;;
   *) : ;;
 esac
