@@ -46,14 +46,39 @@
 # without a subordinate range fails with a message about newuidmap that says
 # nothing about the cause. 65536 each, non-overlapping, so neither user's
 # namespace can reach into the other's files even by uid collision.
+- name: Ensure the subordinate id files exist
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    content: ""
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  loop:
+    - /etc/subuid
+    - /etc/subgid
+
+# Checked against the file rather than inferred from usermod's exit status,
+# which is what makes this idempotent: re-running --add-subuids appends a
+# second range instead of reporting that one is already there.
+- name: Read the ranges already assigned
+  ansible.builtin.slurp:
+    src: /etc/subuid
+  register: subuid_file
+
 - name: Give each user a subordinate uid/gid range
-  ansible.builtin.command: "usermod --add-sub-uids {{ item.base }}-{{ item.base + 65535 }} --add-sub-gids {{ item.base }}-{{ item.base + 65535 }} {{ item.name }}"
+  ansible.builtin.command: >
+    usermod
+    --add-subuids {{ item.base }}-{{ item.base + 65535 }}
+    --add-subgids {{ item.base }}-{{ item.base + 65535 }}
+    {{ item.name }}
   loop:
     - { name: "{{ runtime_user }}", base: 200000 }
     - { name: "{{ build_user }}", base: 300000 }
-  register: subid
-  changed_when: subid.rc == 0
-  failed_when: subid.rc != 0 and 'already' not in (subid.stderr | default(''))
+  # The colon matters: without it, "cgl" would match the cgl-build line and
+  # the runtime user would silently never get a range.
+  when: (item.name ~ ':') not in (subuid_file.content | b64decode)
+  changed_when: true
 
 # Their units have to run with nobody logged in, which is what lingering is.
 # Without it `systemctl --user` works over ssh and then every container is

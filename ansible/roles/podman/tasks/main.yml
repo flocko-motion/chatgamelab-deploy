@@ -41,12 +41,14 @@
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ runtime_uid }}"
 
-# Keeps the build cache from growing without bound. The images themselves are
-# left alone: an image tagged by SHA is what makes switching back to a commit
-# take seconds, so they are the point rather than clutter.
+# Keeps the build cache from growing without bound — each distinct
+# package-lock.json pins its own ~500 MB layer set. `builder prune` rather than
+# `system prune` deliberately: it touches the cache alone, and never a tagged
+# image. Those are the point rather than clutter, since an image tagged by SHA
+# is what makes returning to a commit take seconds.
 - name: Prune the build cache weekly
   ansible.builtin.cron:
     name: podman build cache prune
     user: "{{ build_user }}"
     special_time: weekly
-    job: "podman system prune --force --filter until=336h >/dev/null 2>&1"
+    job: "podman builder prune --force --filter until=336h >/dev/null 2>&1"

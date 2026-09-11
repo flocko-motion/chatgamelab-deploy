@@ -44,12 +44,26 @@ secret_set() { # key value
   mv "$tmp" "$ENV_SECRET"
 }
 
-# docker compose, speaking to podman's Docker-API socket. No daemon is
-# involved: podman.socket is a per-user systemd socket unit, so this whole
-# stack runs in RUNTIME_USER's own user namespace.
+# Compose v2 against podman's Docker-API socket. No daemon and no Docker CLI
+# are involved: Debian's docker-compose package depends on libc6 alone and
+# ships a standalone /usr/bin/docker-compose, and podman.socket is a per-user
+# systemd socket unit — so the whole stack runs in RUNTIME_USER's own user
+# namespace.
+#
+# The standalone binary is what gets used, since `docker compose` with a space
+# needs a `docker` CLI to dispatch the plugin and there deliberately is none.
+if command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_BIN="docker-compose"
+elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  COMPOSE_BIN="docker compose"
+else
+  echo "no compose v2 found — expected /usr/bin/docker-compose from the docker-compose package" >&2
+  exit 1
+fi
+
 compose() {
   DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock" \
-  docker compose \
+  $COMPOSE_BIN \
     --file "$COMPOSE_FILE" \
     --env-file "$ENV_CONFIG" \
     --env-file "$ENV_SECRET" \
