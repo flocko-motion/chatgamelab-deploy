@@ -67,7 +67,15 @@ fi
 # warnings on every command. A bare ssh command inherits neither, so they are
 # set here rather than relied on.
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+# Only when the socket is actually there. Pointing this at a path that does not
+# exist is worse than leaving it unset: podman then falls back to the *system*
+# bus, which needs polkit, and a build dies with "Interactive authentication
+# required" instead of degrading to cgroupfs with a warning.
+if [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+else
+  unset DBUS_SESSION_BUS_ADDRESS
+fi
 
 compose() {
   DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock" \

@@ -31,6 +31,41 @@
       unqualified-search-registries = ["docker.io"]
     mode: "0644"
 
+# cgroupfs rather than systemd, for both users.
+#
+# The systemd cgroup manager needs a per-user D-Bus, which needs a user manager
+# that has reached sockets.target — on a box where nobody ever logs in that is
+# a surprising amount of machinery to depend on, and it has already failed
+# twice here in different ways. What it buys is systemd-managed resource
+# limits, and this stack declares none.
+#
+# So the dependency goes. podman then neither warns nor reaches for the system
+# bus, and a build no longer cares whether a session exists.
+- name: Create the per-user containers config directory
+  ansible.builtin.file:
+    path: "{{ item.home }}/.config/containers"
+    state: directory
+    owner: "{{ item.name }}"
+    group: "{{ item.name }}"
+    mode: "0755"
+  loop: "{{ box_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Point podman at the cgroupfs manager
+  ansible.builtin.copy:
+    dest: "{{ item.home }}/.config/containers/containers.conf"
+    content: |
+      # Managed by ansible (roles/podman).
+      [engine]
+      cgroup_manager = "cgroupfs"
+    owner: "{{ item.name }}"
+    group: "{{ item.name }}"
+    mode: "0644"
+  loop: "{{ box_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Create the per-user systemd directories
   ansible.builtin.file:
     path: "{{ item.home }}/.config/systemd/user"
