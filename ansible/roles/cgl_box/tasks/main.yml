@@ -1,4 +1,14 @@
 ---
+# 0755 and root-owned: both users traverse it, neither owns it, and the clone
+# inside is runtime_user's.
+- name: Create the deploy directory
+  ansible.builtin.file:
+    path: "{{ deploy_base }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Create the handoff directory
   ansible.builtin.file:
     path: "{{ handoff_dir }}"

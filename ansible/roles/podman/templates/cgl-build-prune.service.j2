@@ -10,4 +10,5 @@ Group={{ build_user }}
 # no XDG_RUNTIME_DIR, and lingering (roles/common) is what keeps the path alive
 # with nobody logged in.
 Environment=XDG_RUNTIME_DIR=/run/user/{{ build_uid }}
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{{ build_uid }}/bus
 ExecStart=/usr/bin/podman builder prune --force --filter until=336h

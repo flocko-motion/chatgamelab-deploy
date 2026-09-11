@@ -201,7 +201,10 @@ hook_path_val="$(yaml_get hook_path "$all_vars")"
 app_repo_slug="$(yaml_get app_repo_slug "$all_vars")"
 track_branch="$(yaml_get track_branch "$vars_file")"
 update_interval="$(yaml_get update_interval "$all_vars")"
-deploy_clone_remote="$runtime_home/deploy"
+# Read rather than assumed, since group_vars is where the path is decided and
+# it is not under runtime_home.
+deploy_base="$(yaml_get deploy_base "$all_vars")"
+deploy_clone_remote="$(yaml_get deploy_clone "$all_vars" | sed "s#{{ deploy_base }}#$deploy_base#")"
 
 echo ">> https://$domain"
 

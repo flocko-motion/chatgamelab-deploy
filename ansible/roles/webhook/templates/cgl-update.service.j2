@@ -14,6 +14,7 @@ Group={{ runtime_user }}
 # gets no XDG_RUNTIME_DIR of its own, and lingering is what keeps the path
 # alive between logins (roles/common).
 Environment=XDG_RUNTIME_DIR=/run/user/{{ runtime_uid }}
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{{ runtime_uid }}/bus
 ExecStart={{ deploy_clone }}/box/cgl-update
 # A build is minutes; a build on a cold cache is longer. Generous rather than
 # unbounded, so a wedged run is eventually reclaimed.

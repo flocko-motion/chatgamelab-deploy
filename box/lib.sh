@@ -61,8 +61,16 @@ else
   exit 1
 fi
 
+# Rootless podman reaches the user systemd through these two. Without the bus
+# address it cannot create cgroups and falls back to --cgroup-manager=cgroupfs,
+# which works and silently discards compose's mem_limit — and says so in three
+# warnings on every command. A bare ssh command inherits neither, so they are
+# set here rather than relied on.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+
 compose() {
-  DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock" \
+  DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock" \
   $COMPOSE_BIN \
     --file "$COMPOSE_FILE" \
     --env-file "$ENV_CONFIG" \

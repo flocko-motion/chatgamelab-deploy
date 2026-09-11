@@ -25,7 +25,13 @@ build_home: /var/lib/cgl-build
 
 # Where the deploy repository clones itself on the box. Phase two runs from
 # here, so the box redeploys without a laptop in the loop.
-deploy_clone: "{{ runtime_home }}/deploy"
+#
+# Under /opt rather than in runtime_user's home, because build_user has to
+# execute box/cgl-build out of it and Debian creates a home mode 0700 — which
+# refuses the traversal however the script's own bits are set. Neither user's
+# home is on the other's path for anything.
+deploy_base: /opt/chatgamelab
+deploy_clone: "{{ deploy_base }}/deploy"
 
 # The stack's environment file: committed config from host_vars, plus the two
 # values generated on the box and never held anywhere else (see box/cgl-env).
