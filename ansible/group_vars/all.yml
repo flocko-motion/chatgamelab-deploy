@@ -7,6 +7,13 @@
 # would matter. The deploy repository can be public because it carries no
 # secrets — every value the instance needs is either committed config here or
 # generated on the box itself (see box/cgl-env).
+# Pinned to Debian's own maintained symlink, rather than leaving ansible to
+# rediscover it every run and warn about it. The warning is real rather than
+# noise: discovery picks the concrete /usr/bin/python3.13 today, and a later
+# Debian point release that moves to 3.14 would have it silently choose
+# differently. The symlink stays valid across that.
+ansible_python_interpreter: /usr/bin/python3
+
 app_repo: https://github.com/flocko-motion/chatgamelab.git
 deploy_repo: https://github.com/flocko-motion/chatgamelab-deploy.git
 
