@@ -663,16 +663,23 @@ case "$answer" in
 
     have_key="$(cur HAS_KEY)"
     if [ -n "$have_key" ]; then
-      printf '   private key file [keep the one on the box, %s]: ' "$have_key"
+      printf "   private key file ['new' to generate one, or Enter to keep %s]: " "$have_key"
     else
-      printf '   private key file: '
+      printf "   private key file ['new' to generate one on the box]: "
     fi
     read -r b_key
 
     [ -n "$b_host" ] && [ -n "$b_user" ] \
       || die "host and user are both needed; nothing has been changed."
-    [ -n "$b_key" ] || [ -n "$have_key" ] \
-      || die "there is no key on the box to keep, so one is needed here."
+
+    # Generated on the box, so the private half never reaches this machine.
+    generate_key=0
+    case "$b_key" in
+      new|NEW|generate) generate_key=1; b_key="" ;;
+    esac
+
+    [ "$generate_key" -eq 1 ] || [ -n "$b_key" ] || [ -n "$have_key" ] \
+      || die "there is no key on the box to keep, so give a path or say 'new'."
 
     # read does no expansion, so a path typed with a ~ arrives literally.
     case "$b_key" in
@@ -720,8 +727,18 @@ case "$answer" in
       printf 'BACKUP_PATH=%s\n' "${b_path:-backups}"
       [ -z "$key_b64" ] || printf 'BACKUP_SSH_KEY_B64=%s\n' "$key_b64"
     } | ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$runtime_home/secrets.env'"
-    ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
-      || die "The box refused the backup destination; nothing has been deployed."
+    if [ "$generate_key" -eq 1 ]; then
+      ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' generate" \
+        || die "Could not generate a key on the box."
+      # The destination cannot possibly accept it yet, so installing the rest
+      # is reported rather than fatal: the deploy goes ahead and backups start
+      # working the moment the public half is registered. No re-run needed.
+      ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
+        || echo "   backups wait on that key being registered — nothing else is affected"
+    else
+      ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
+        || die "The box refused the backup destination; nothing has been deployed."
+    fi
     ;;
   *) : ;;
 esac
