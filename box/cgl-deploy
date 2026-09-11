@@ -34,7 +34,12 @@ if [ "$(git -C "$DEPLOY_CLONE" rev-parse HEAD)" != "$deploy_sha" ]; then
   [ -z "${CGL_REEXEC:-}" ] || die "checked out $deploy_sha and HEAD still disagrees — giving up rather than looping."
   step "checking out the deploy commit"
   git -C "$DEPLOY_CLONE" fetch --quiet origin
-  git -C "$DEPLOY_CLONE" checkout --quiet --detach "$deploy_sha" \
+  # reset --hard rather than checkout: this clone is machine-managed and nobody
+  # edits it, so local drift is something to discard rather than protect. A
+  # checkout refuses to cross it and wedges every deploy until someone logs in
+  # to clean up by hand — which is how a stray chmod over box/ once stopped
+  # this box deploying at all.
+  git -C "$DEPLOY_CLONE" reset --quiet --hard "$deploy_sha" \
     || die "$deploy_sha is not in $DEPLOY_CLONE — is it pushed?"
   say "$(git -C "$DEPLOY_CLONE" rev-parse --short=7 HEAD)"
   CGL_REEXEC=1 exec "$DEPLOY_CLONE/box/cgl-deploy" \

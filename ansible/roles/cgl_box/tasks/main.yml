@@ -44,14 +44,6 @@
   become: true
   become_user: "{{ runtime_user }}"
 
-- name: Make phase two executable
-  ansible.builtin.file:
-    path: "{{ deploy_clone }}/box"
-    mode: "0755"
-    recurse: true
-    owner: "{{ runtime_user }}"
-    group: "{{ runtime_user }}"
-
 # A full mirror of the application, ~100 MB, which is what makes any reachable
 # commit checkoutable without depending on GitHub serving arbitrary SHAs to a
 # fetch. Owned by the build user, since building is all it is for.
