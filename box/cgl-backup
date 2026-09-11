@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Take a backup now, or see what is already at the destination.
+#
+# The nightly timer runs the same thing (cgl-backup.service), so this is the
+# same path rather than a parallel one — what you see here is what 02:30 does.
+. "$(dirname "$0")/lib.sh"
+
+key="$RUNTIME_HOME/backup_key"
+
+sftp_at() { # commands on stdin
+  local bhost bport buser
+  bhost="$(secret_get BACKUP_SSH_HOST)"
+  bport="$(secret_get BACKUP_SSH_PORT)"; bport="${bport:-22}"
+  buser="$(secret_get BACKUP_SSH_USER)"
+  sftp -b - -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 \
+    -i "$key" -P "$bport" "$buser@$bhost" 2>&1
+}
+
+require_configured() {
+  [ "$(secret_get BACKUP_ENABLED || echo false)" = "true" ] \
+    || die "no backup destination is configured on this box." \
+           "" \
+           "  ./deploy.sh $DOMAIN <commit>" \
+           "" \
+           "asks for one."
+}
+
+case "${1:-}" in
+  now)
+    require_configured
+    # Probed before the dump, because the application's backup.sh calls sftp
+    # without BatchMode: when key auth fails it falls back to prompting for a
+    # password, reads its own heredoc as the answer, and then hangs until
+    # something kills it. That is how the previous deployment failed nightly
+    # for seven months while reporting only a timeout. cgl-secrets probes with
+    # BatchMode set, so a destination that no longer works says so in seconds
+    # and no dump is taken for nothing.
+    "$DEPLOY_CLONE/box/cgl-secrets" check \
+      || die "the destination is not usable, so no backup was attempted."
+    step "backing up"
+    # Run directly rather than through systemctl start, so the output and the
+    # exit status come back here instead of only to the journal.
+    if podman exec chatgamelab-db /usr/local/bin/backup.sh 2>&1 | sed 's/^/   /'; then
+      say "done"
+    else
+      die "the backup failed — see above, and 'cgl-backup list' for what is there."
+    fi
+    step "newest at the destination"
+    printf 'cd %s\nls -lt\nquit\n' "$(secret_get BACKUP_PATH)" | sftp_at \
+      | grep -E '\.sql\.gz$' | head -3 | sed 's/^/   /'
+    ;;
+  list)
+    require_configured
+    step "$(secret_get BACKUP_SSH_USER)@$(secret_get BACKUP_SSH_HOST):$(secret_get BACKUP_PATH)"
+    printf 'cd %s\nls -lt\nquit\n' "$(secret_get BACKUP_PATH)" | sftp_at \
+      | grep -E '\.sql\.gz$' | sed 's/^/   /'
+    ;;
+  *) die "usage: cgl-backup now|list" ;;
+esac
