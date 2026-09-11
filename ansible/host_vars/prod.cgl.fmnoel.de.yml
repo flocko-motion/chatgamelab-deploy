@@ -41,10 +41,6 @@ auth0_domain: chatgamelab.eu.auth0.com
 auth0_audience: https://chatgamelab.eu.auth0.com/api/v2/
 auth0_client_id: UqajOgWm3xl92J4lxZnjlZw14mOXtEJm
 
-# Sentry/GlitchTip. Empty disables reporting on that side.
-sentry_dsn_backend: ""
-sentry_dsn_frontend: ""
-
 # Pulled, not built. A released version is what production runs, and naming one
 # is a deliberate act: ./deploy.sh refuses a ref here that carries no vX.Y.Z
 # tag, and checks the registry holds all three images before touching the box.

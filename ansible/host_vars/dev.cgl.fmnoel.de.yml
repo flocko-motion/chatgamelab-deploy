@@ -44,10 +44,6 @@ auth0_domain: dev-txs0-7xb.eu.auth0.com
 auth0_audience: https://cgl.fmnoel.de/api
 auth0_client_id: LZW4vchTZBfQhYpXplZB5TtNXgyRSVfm
 
-# Sentry/GlitchTip. Empty disables reporting on that side.
-sentry_dsn_backend: ""
-sentry_dsn_frontend: ""
-
 # DEV_MODE is on here and DEV_JWT_SECRET is unset; see the reasoning in
 # roles/cgl_box/templates/env.config.j2, which is where both are set. Neither
 # belongs in this file: the pairing is a property of the deployment rather than
