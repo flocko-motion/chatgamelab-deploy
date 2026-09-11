@@ -15,6 +15,22 @@
       - docker-compose
     state: present
 
+# Podman assumes no registry, deliberately, and Debian ships registries.conf
+# with none configured — so `FROM postgres:18` resolves to nothing and the
+# build fails on a short name that Docker would have silently completed.
+#
+# One registry rather than a list: the application's five base images
+# (golang, debian, postgres, node, nginx) are all Docker Hub official, and a
+# single entry means a short name cannot quietly resolve somewhere else. A
+# drop-in rather than an edit to registries.conf, so a package update to that
+# file is not something to merge by hand.
+- name: Let short image names resolve to Docker Hub, and nowhere else
+  ansible.builtin.copy:
+    dest: /etc/containers/registries.conf.d/00-unqualified-search.conf
+    content: |
+      unqualified-search-registries = ["docker.io"]
+    mode: "0644"
+
 - name: Create the per-user systemd directories
   ansible.builtin.file:
     path: "{{ item.home }}/.config/systemd/user"
