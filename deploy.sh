@@ -67,6 +67,9 @@ sha256() { # reads stdin, prints the hex digest
   else shasum -a 256 | cut -d' ' -f1; fi
 }
 
+# stat -c is GNU, stat -f is BSD; both userlands answer to one of them.
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+
 require_tools() {
   local missing="" apt_pkgs="" brew_pkgs=""
   # tool:apt-package:brew-package
@@ -540,11 +543,12 @@ fi
 # is given here interactively and lives on the box from then on, so it stays in
 # your password manager and never in this repository.
 echo ">> backups"
-if ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' check"; then
-  backup_prompt="Replace the backup destination? [y/N] "
-else
-  backup_prompt="Set the backup destination now? [y/N] "
-fi
+backup_state=0
+ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' check" || backup_state=$?
+case "$backup_state" in
+  0) backup_prompt="Replace the backup destination? [y/N] " ;;   # configured and working
+  *) backup_prompt="Set the backup destination now? [y/N] " ;;   # absent, or broken
+esac
 printf '   %s' "$backup_prompt"
 read -r answer
 case "$answer" in
@@ -556,9 +560,35 @@ case "$answer" in
     printf '   private key file: ';     read -r b_key
     [ -n "$b_host" ] && [ -n "$b_user" ] \
       || die "host and user are both needed; nothing has been changed."
+
+    # read does no expansion, so a path typed with a ~ arrives literally.
+    case "$b_key" in
+      "~") b_key="$HOME" ;;
+      "~/"*) b_key="$HOME/${b_key#\~/}" ;;
+    esac
     [ -r "$b_key" ] || die "cannot read $b_key; nothing has been changed."
+
+    # ssh refuses a private key others can read, and says so in a banner that
+    # looks like a different problem entirely — so it is caught here, where the
+    # answer is one keystroke. scp brings a loose mode across, which is how a
+    # key copied from another host usually arrives.
+    if [ "$(( 8#$(file_mode "$b_key") & 8#77 ))" -ne 0 ]; then
+      echo "   $b_key is mode $(file_mode "$b_key"), which ssh refuses —"
+      echo "   and which lets anyone on this machine read it."
+      printf '   chmod 600 it? [Y/n] '
+      read -r fix_mode
+      case "$fix_mode" in
+        n|N) die "left as it is, and what follows would refuse it." ;;
+        *) chmod 600 "$b_key"; echo "   now mode $(file_mode "$b_key")" ;;
+      esac
+    fi
+
     ssh-keygen -y -f "$b_key" >/dev/null 2>&1 \
-      || die "$b_key is not a private key ssh can read; nothing has been changed."
+      || die "ssh cannot read $b_key as a private key." \
+             "" \
+             "If it is passphrase-protected, the database container cannot use" \
+             "it unattended — make an unencrypted key for this and register its" \
+             "public half on the destination."
 
     # base64 because an env file has no multi-line values, and -w0 is GNU-only.
     key_b64="$(base64 -w0 < "$b_key" 2>/dev/null || base64 < "$b_key" | tr -d '\n')"
