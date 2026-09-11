@@ -349,12 +349,19 @@ fi
 
 ssh_opts="-o BatchMode=yes -o ConnectTimeout=10"
 
+# Every call below that pipes nothing in gets -n as well. ssh reads stdin by
+# default and forwards it to the remote command, so one of these swallowing a
+# script's own input is how an answer typed for a later prompt disappeared and
+# `read` then hit EOF — which under set -e ends the run with no message at all.
+# -n is per-call rather than in ssh_opts, because the calls that push a secret
+# or a dump do need stdin.
+
 # Authentication is by key throughout, held in your ssh-agent; nothing here can
 # fall back to a password. Asked as its own question because inside a play the
 # two causes — a key the agent is not holding, and a key the box never knew —
 # arrive identically as "Permission denied (publickey)", several tasks in, with
 # the agent never mentioned.
-ssh_works() { ssh $ssh_opts "$1@$host" true 2>/dev/null; }
+ssh_works() { ssh -n $ssh_opts "$1@$host" true 2>/dev/null; }
 
 explain_ssh_failure() { # user
   local user="$1" agent=0
@@ -398,7 +405,7 @@ explain_ssh_failure() { # user
 # into a play.
 check_box() { # user
   local blob
-  blob="$(ssh $ssh_opts "$1@$host" '
+  blob="$(ssh -n $ssh_opts "$1@$host" '
     . /etc/os-release 2>/dev/null || true
     echo "os_id=${ID:-unknown}"
     echo "os_version=${VERSION_ID:-unknown}"
@@ -502,7 +509,7 @@ if ssh_works "$runtime_user"; then
   echo "   $runtime_user@$host — key accepted"
   box="$(check_box "$runtime_user")" || die "Reached $runtime_user@$host and then could not read its state."
   require_box_supported "$box"
-  recorded="$(ssh $ssh_opts "$runtime_user@$host" "cat '$runtime_home/.ground-hash' 2>/dev/null" || true)"
+  recorded="$(ssh -n $ssh_opts "$runtime_user@$host" "cat '$runtime_home/.ground-hash' 2>/dev/null" || true)"
   if [ "$recorded" = "$ground_hash" ]; then
     echo ">> ground setup — unchanged since this box last converged, skipping"
   else
@@ -572,7 +579,7 @@ fi
 # reset --hard because the clone is machine-managed and nobody edits it, so
 # local drift is to be discarded rather than protected.
 echo ">> bringing the box's clone to $(git -C "$repo_root" rev-parse --short HEAD)"
-ssh $ssh_opts "$runtime_user@$host" \
+ssh -n $ssh_opts "$runtime_user@$host" \
   "git -C '$deploy_clone_remote' fetch --quiet origin \
    && git -C '$deploy_clone_remote' reset --quiet --hard '$self_sha'" \
   || die "Could not bring $deploy_clone_remote to $self_sha." \
@@ -626,17 +633,18 @@ fi
 # your password manager and never in this repository.
 echo ">> backups"
 backup_state=0
-ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' check" || backup_state=$?
+ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' check" || backup_state=$?
 case "$backup_state" in
   0) backup_prompt="Replace the backup destination? [y/N] " ;;   # configured and working
   *) backup_prompt="Set the backup destination now? [y/N] " ;;   # absent, or broken
 esac
 printf '   %s' "$backup_prompt"
-read -r answer
+read -r answer || die "" "No answer on stdin, so nothing was changed." \
+                        "Run this from a terminal, or pipe an answer in."
 case "$answer" in
   y|Y)
     # Offered back, so correcting one value costs one value rather than five.
-    current="$(ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' show" 2>/dev/null || true)"
+    current="$(ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' show" 2>/dev/null || true)"
     cur() { printf '%s\n' "$current" | sed -n "s/^$1=//p" | head -1; }
 
     ask() { # prompt current-value fallback -> answer on stdout
@@ -712,7 +720,7 @@ case "$answer" in
       printf 'BACKUP_PATH=%s\n' "${b_path:-backups}"
       [ -z "$key_b64" ] || printf 'BACKUP_SSH_KEY_B64=%s\n' "$key_b64"
     } | ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$runtime_home/secrets.env'"
-    ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
+    ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
       || die "The box refused the backup destination; nothing has been deployed."
     ;;
   *) : ;;
