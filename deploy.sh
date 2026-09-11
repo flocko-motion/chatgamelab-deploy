@@ -747,6 +747,19 @@ rotate_hook_secret() {
     return 1
   fi
   echo "   $hook_secret_name rotated, both ends set"
+
+  # The endpoint's address, written beside the secret rather than hardcoded in
+  # the workflow. A domain that moves would otherwise leave CI posting at a
+  # name that no longer resolves — which is exactly what happened when this
+  # instance became dev.cgl.fmnoel.de, and the workflow went on triggering
+  # cgl.fmnoel.de into a NXDOMAIN for hours while the timer quietly covered it.
+  if ! gh variable set CGL_DEPLOY_HOOK_URL --repo "$app_repo_slug" \
+       --body "https://$domain$hook_path_val" >/dev/null 2>&1; then
+    echo "   couldn't set CGL_DEPLOY_HOOK_URL on $app_repo_slug — CI will post" >&2
+    echo "   wherever it was last told to. Check 'gh auth status'." >&2
+    return 1
+  fi
+  echo "   CGL_DEPLOY_HOOK_URL set to https://$domain$hook_path_val"
 }
 
 echo ">> the deploy trigger"
