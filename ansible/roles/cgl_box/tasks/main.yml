@@ -1,13 +1,18 @@
 ---
-# 0755 and root-owned: both users traverse it, neither owns it, and the clone
-# inside is runtime_user's.
+# Two directories, because the ownership differs and both halves matter.
+# deploy_base is root's and merely traversable; the clone inside it is
+# runtime_user's, so the git module can write there as that user, and 0755 so
+# build_user can traverse in to execute box/cgl-build.
 - name: Create the deploy directory
   ansible.builtin.file:
-    path: "{{ deploy_base }}"
+    path: "{{ item.path }}"
     state: directory
-    owner: root
-    group: root
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
     mode: "0755"
+  loop:
+    - { path: "{{ deploy_base }}", owner: root }
+    - { path: "{{ deploy_clone }}", owner: "{{ runtime_user }}" }
 
 - name: Create the handoff directory
   ansible.builtin.file:
