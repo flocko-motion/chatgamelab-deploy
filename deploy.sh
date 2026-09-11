@@ -649,16 +649,26 @@ fi
 # in this deployment — the SSH key the database container uploads dumps with —
 # is given here interactively and lives on the box from then on, so it stays in
 # your password manager and never in this repository.
-echo ">> backups"
+echo ">> where backups are written"
 backup_state=0
 ssh -n $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' check" || backup_state=$?
-case "$backup_state" in
-  0) backup_prompt="Replace the backup destination? [y/N] " ;;   # configured and working
-  *) backup_prompt="Set the backup destination now? [y/N] " ;;   # absent, or broken
-esac
-printf '   %s' "$backup_prompt"
-read -r answer || die "" "No answer on stdin, so nothing was changed." \
-                        "Run this from a terminal, or pipe an answer in."
+
+# Asked only when nobody is being asked to restore. A run that is loading a
+# dump is being told to read one, and stopping it to ask where future ones
+# should be written reads like a question about the restore itself — besides
+# making an otherwise unattended operation wait for a keystroke.
+if [ -n "$restore_file" ] || [ "$restore_latest" -eq 1 ]; then
+  answer=n
+  echo "   left as it is — this run is restoring a dump, not configuring one"
+else
+  case "$backup_state" in
+    0) backup_prompt="Change where backups are written? [y/N] " ;;  # configured and working
+    *) backup_prompt="Set where backups are written? [y/N] " ;;     # absent, or broken
+  esac
+  printf '   %s' "$backup_prompt"
+  read -r answer || die "" "No answer on stdin, so nothing was changed." \
+                          "Run this from a terminal, or pipe an answer in."
+fi
 case "$answer" in
   y|Y)
     # Offered back, so correcting one value costs one value rather than five.
