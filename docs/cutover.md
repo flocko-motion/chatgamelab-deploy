@@ -129,7 +129,24 @@ rollback across one needs `--restore` of a dump from that era.
   meant two unauthenticated routes were registered on the live system
   (`server/api/routes/router.go:81`). Worth deleting the rows once nothing
   references them.
-- **One key per instance, but the main Storage Box account can read both.**
-  Sub-account separation is real — each has its own
-  `~/.ssh/authorized_keys` — so neither box can reach the other's backups.
-  The main account's password can, and belongs nowhere near either machine.
+- **One key per instance.** Sub-account separation is real: each has its own
+  `~/.ssh/authorized_keys`, so neither box can reach the other's backups. The
+  main account can read both, and stays with whoever owns the Storage Box —
+  which is deliberate, since the Storage Box is not part of what a handover
+  transfers.
+
+## Handing production to someone else
+
+Nothing about the backup destination is in this repository. It is given to
+`./deploy.sh` interactively, once, and lives on the box from then on — so a new
+owner points the instance at their own storage by answering the prompt, with
+`new` at the key question so the box mints its own keypair and prints only the
+public half to register. No credential of the previous owner's transfers, and
+none has to be rotated.
+
+The same holds for Auth0: the domain, audience and client id are per-instance
+in `host_vars`, so production can be moved to another account by editing three
+lines. What that costs is every existing account's ability to sign in, since
+`auth0_id` is tenant-scoped — so it is a migration in its own right rather than
+a configuration change, and wants doing deliberately rather than as a side
+effect of changing hands.
