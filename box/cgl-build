@@ -31,6 +31,13 @@ done
 [ "$(id -un)" = "$BUILD_USER" ] \
   || die "cgl-build runs as $BUILD_USER and is running as $(id -un)."
 
+# sudo hands this process the caller's working directory, and the caller is
+# cgl-deploy running as the runtime user in its own home — mode 0700, so
+# unreadable here. git survives it because every path below is absolute, and
+# podman does not: it needs to resolve the cwd and fails with "cannot chdir",
+# which says nothing about whose directory it was.
+cd "$BUILD_HOME"
+
 step "fetching $app_sha" >&2
 git --git-dir="$APP_MIRROR" fetch --quiet --prune --prune-tags --tags origin \
   '+refs/heads/*:refs/heads/*'
