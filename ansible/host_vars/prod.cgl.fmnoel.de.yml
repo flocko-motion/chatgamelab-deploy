@@ -48,6 +48,14 @@ sentry_dsn_frontend: ""
 # Pulled, not built. A released version is what production runs, and naming one
 # is a deliberate act: ./deploy.sh refuses a ref here that carries no vX.Y.Z
 # tag, and checks the registry holds all three images before touching the box.
+# What ./deploy.sh deploys when no commit is named: main, whose head is the
+# most recent release. This instance pulls images, so the ref it is given must
+# carry a vX.Y.Z tag — which main's head does whenever semantic-release cut one
+# for it. A docs-only merge it skipped leaves main's head untagged, and
+# ./deploy.sh then refuses and lists the tags that would work. That refusal is
+# the point: production runs a release, and "whatever is on main" is not one.
+default_ref: main
+
 image_source: registry
 
 # No track_branch, deliberately. Nothing converges on production by itself —

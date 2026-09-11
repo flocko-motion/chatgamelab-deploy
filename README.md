@@ -5,13 +5,14 @@ one instance per v-server, built on the box from source, run rootless under
 podman behind native nginx.
 
 ```
-./deploy.sh <server> <commit> [--reset-db <admin-email>] [--force-rebuild]
+./deploy.sh <server> [commit] [--reset-db <admin-email>] [--force-rebuild]
+                              [--restore <dump.sql.gz>]
 
-./deploy.sh cgl.fmnoel.de development
-./deploy.sh cgl.fmnoel.de v1.56.0
-./deploy.sh cgl.fmnoel.de 68b1744
-./deploy.sh cgl.fmnoel.de engineV2 --reset-db you@example.com
-./deploy.sh cgl.fmnoel.de development --force-rebuild
+./deploy.sh dev.cgl.fmnoel.de                    # the instance's default_ref
+./deploy.sh dev.cgl.fmnoel.de engineV2           # a branch CI never builds
+./deploy.sh dev.cgl.fmnoel.de 68b1744 --force-rebuild
+./deploy.sh prod.cgl.fmnoel.de v1.57.0
+./deploy.sh prod.cgl.fmnoel.de --restore ~/cgl-prod.sql.gz
 ```
 
 `<server>` is a domain, and it is the whole address of an instance: the file
@@ -19,7 +20,11 @@ podman behind native nginx.
 certificate nginx serves, and the host SSH reaches. Adding an instance is one
 file and one line.
 
-`<commit>` is anything git resolves — a branch, a tag, a short or full SHA.
+Omit the commit and the instance's own `default_ref` applies — `development`
+for the development box, `main` for production, whose head is the most recent
+release. Naming one is therefore the deliberate act rather than the routine one.
+
+`[commit]` is anything git resolves — a branch, a tag, a short or full SHA.
 It is resolved on your machine to an immutable SHA before anything is asked of
 the box, so a branch name never travels and two runs a day apart report which
 commits they actually deployed.
