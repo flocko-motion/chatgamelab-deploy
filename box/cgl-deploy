@@ -284,6 +284,9 @@ say "db, backend and web all running"
 # runs on every deploy and is idempotent, rather than being tied to --reset-db
 # and leaving a restart able to close the gate again.
 step "admin bootstrap"
+if [ "$dev_mode" != "true" ]; then
+  say "no preseeded accounts to stand aside — dev mode is off here"
+else
 removed="$(compose exec -T -e PGPASSWORD="$(secret_get DB_PASSWORD)" db \
   psql -U chatgamelab -d chatgamelab -tAc "
     WITH gone AS (
@@ -307,6 +310,7 @@ case "${removed:-}" in
   *)    say "$removed preseeded dev admin role(s) dropped, so the gate is open"
         say "the first sign-in from an address in ADMIN_EMAILS becomes admin" ;;
 esac
+fi
 
 # Recorded last, so it names a commit that actually came up rather than one
 # that was merely asked for.
