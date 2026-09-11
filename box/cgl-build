@@ -67,6 +67,27 @@ fi
 short="$(git -C "$APP_WORKTREE" rev-parse --short=7 "$app_sha")"
 build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# What the footer and the version tooltip show. The tag wins when the commit
+# carries one, so a released build says 1.56.0 and nothing else.
+#
+# Otherwise git describe, which names the nearest reachable tag, the distance
+# from it, and the commit: 1.47.0-251-g4ba93d8. Note the tag it reaches for on
+# a development commit is older than main's latest — v1.48.0 onwards sit on
+# main and are not ancestors of development — so the number is the last release
+# in this commit's own history rather than the newest release anywhere.
+#
+# The leading v is stripped because the UI adds its own.
+#
+# CI computes a semver instead (1.57.0-dev.N, from the commit count since the
+# last stable tag), which is right for a branch build and wrong here: this box
+# deploys arbitrary commits, and two commits on different branches can sit the
+# same distance from a tag. The commit has to be in the string.
+version="$(git -C "$APP_WORKTREE" describe --tags --exact-match "$app_sha" 2>/dev/null \
+  || git -C "$APP_WORKTREE" describe --tags "$app_sha" 2>/dev/null \
+  || printf '0.0.0-g%s' "$short")"
+version="${version#v}"
+say "version $version" >&2
+
 build_one() { # image dockerfile context
   local image="$1" dockerfile="$2" context="$3" ref
   ref="$(image_ref "$image" "$app_sha")"
@@ -78,7 +99,7 @@ build_one() { # image dockerfile context
   podman build \
     --tag "$ref" \
     --file "$APP_WORKTREE/$dockerfile" \
-    --build-arg "VERSION=$short" \
+    --build-arg "VERSION=$version" \
     --build-arg "GIT_COMMIT=$app_sha" \
     --build-arg "BUILD_TIME=$build_time" \
     "$APP_WORKTREE/$context"
