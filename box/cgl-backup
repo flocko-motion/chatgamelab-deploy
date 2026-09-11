@@ -5,17 +5,6 @@
 # same path rather than a parallel one — what you see here is what 02:30 does.
 . "$(dirname "$0")/lib.sh"
 
-key="$RUNTIME_HOME/backup_key"
-
-sftp_at() { # commands on stdin
-  local bhost bport buser
-  bhost="$(secret_get BACKUP_SSH_HOST)"
-  bport="$(secret_get BACKUP_SSH_PORT)"; bport="${bport:-22}"
-  buser="$(secret_get BACKUP_SSH_USER)"
-  sftp -b - -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 \
-    -i "$key" -P "$bport" "$buser@$bhost" 2>&1
-}
-
 require_configured() {
   [ "$(secret_get BACKUP_ENABLED || echo false)" = "true" ] \
     || die "no backup destination is configured on this box." \

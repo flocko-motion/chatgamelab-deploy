@@ -10,7 +10,7 @@
 # with its data intact, which a destroy-first ordering would not.
 . "$(dirname "$0")/lib.sh"
 
-deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""; force_rebuild=0; image_tag=""; restore_file=""
+deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""; force_rebuild=0; image_tag=""; restore_file=""; restore_latest=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --force-rebuild)    force_rebuild=1 ;;
@@ -20,6 +20,9 @@ while [ $# -gt 0 ]; do
     # A dump to load in place of whatever is here. ./deploy.sh puts the file on
     # the box and passes its path.
     --restore)          shift; restore_file="${1:-}" ;;
+    # Fetch the newest dump from this instance's own backup destination. The
+    # box already holds the key, so 530 MB need not travel via a laptop.
+    --restore-latest)   restore_latest=1 ;;
     --deploy-sha)       shift; deploy_sha="${1:-}" ;;
     --app-sha)          shift; app_sha="${1:-}" ;;
     --target-migration) shift; target_migration="${1:-}" ;;
@@ -173,6 +176,35 @@ fi
 # the restore instead, it finds a populated database and runs only the
 # migrations the dump predates — so a dump from an older release is carried
 # forward on first start, which is exactly what a migration between hosts wants.
+if [ "$restore_latest" -eq 1 ]; then
+  step "fetching the newest dump from the backup destination"
+  [ "$(secret_get BACKUP_ENABLED || echo false)" = "true" ] \
+    || die "no backup destination is configured, so there is nothing to fetch."
+  bpath="$(secret_get BACKUP_PATH)"
+  newest="$(printf 'cd %s\nls -1t\nquit\n' "$bpath" | sftp_at \
+    | tr -d '\r' | grep -E '\.sql\.gz$' | head -1 | xargs -r basename)"
+  [ -n "$newest" ] || die "no .sql.gz found at the destination under $bpath."
+  say "$newest"
+  restore_file="/var/tmp/$newest"
+  printf 'get %s/%s %s\nget %s/%s.sha256 %s.sha256\nquit\n' \
+    "$bpath" "$newest" "$restore_file" "$bpath" "$newest" "$restore_file" \
+    | sftp_at >/dev/null || die "could not fetch $newest."
+  say "$(du -h "$restore_file" | cut -f1) downloaded"
+  # Verified where a checksum came with it, since a truncated transfer of half
+  # a gigabyte otherwise restores as a syntax error two minutes in.
+  if [ -s "$restore_file.sha256" ]; then
+    if [ "$(sha256sum "$restore_file" | cut -d' ' -f1)" = "$(tr -d '[:space:]' < "$restore_file.sha256")" ]; then
+      say "checksum matches"
+    else
+      rm -f "$restore_file" "$restore_file.sha256"
+      die "the downloaded dump does not match its checksum — nothing was changed."
+    fi
+  else
+    say "no checksum beside it — restoring unverified"
+  fi
+  rm -f "$restore_file.sha256"
+fi
+
 if [ -n "$restore_file" ]; then
   [ -r "$restore_file" ] || die "cannot read $restore_file on the box."
   step "restoring the database"
