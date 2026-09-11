@@ -20,10 +20,16 @@
     state: directory
     owner: "{{ build_user }}"
     group: "{{ runtime_user }}"
-    # Group-readable so the runtime user can load what the build user saved,
-    # and group-writable by nobody: the build side writes, the runtime side
-    # reads, and neither can reach into the other's image store directly.
-    mode: "0750"
+    # Group-writable, not merely readable: the runtime user removes each
+    # archive once it has loaded it, and unlinking a file needs write on the
+    # directory holding it rather than on the file. 0750 let it read the
+    # archive and then fail to clean up, which took the deploy down after the
+    # images were already in place.
+    #
+    # Still narrow: 0770 with no world bits, between two accounts that are
+    # already on either side of this handoff, and the group is the runtime
+    # user's own.
+    mode: "0770"
 
 # The box's own copy of this repository, which is what phase two runs from —
 # so the box can redeploy with no laptop in the loop, and the manual and
