@@ -762,10 +762,18 @@ rotate_hook_secret() {
   echo "   CGL_DEPLOY_HOOK_URL set to https://$domain$hook_path_val"
 }
 
-echo ">> the deploy trigger"
-# Reported rather than fatal: a dead trigger costs a deploy its promptness and
-# nothing else, since the timer goes on converging on $track_branch regardless.
-rotate_hook_secret || echo "   the trigger may be dead; the ${update_interval:-15min} timer still converges"
+# Only for an instance that follows a branch. The secret and the URL are single
+# values on one shared application repository, so a branchless instance rotating
+# them would point CI's trigger at itself and silently break the instance that
+# does use it.
+if [ -n "$track_branch" ]; then
+  echo ">> the deploy trigger"
+  # Reported rather than fatal: a dead trigger costs a deploy its promptness and
+  # nothing else, since the timer goes on converging on $track_branch regardless.
+  rotate_hook_secret || echo "   the trigger may be dead; the ${update_interval:-15min} timer still converges"
+else
+  echo ">> no deploy trigger — this instance follows no branch"
+fi
 
 # ------------------------------------------------------------------- phase two
 
@@ -810,7 +818,8 @@ probe "https://$domain/env.js" 200 || probe_failed=1
 # A real body, deliberately unsigned, so 403 is the pass: nginx reaches the
 # listener and the listener read the body and refused it. A 404 or a 502 would
 # mean CI posting its triggers into the void.
-probe "https://$domain$hook_path_val" 403 POST '{"probe":true}' || probe_failed=1
+[ -z "$track_branch" ] \
+  || probe "https://$domain$hook_path_val" 403 POST '{"probe":true}' || probe_failed=1
 if [ "$probe_failed" -ne 0 ]; then
   echo >&2
   echo "The stack came up and the box is not serving as expected. Two usual causes:" >&2

@@ -28,6 +28,13 @@ fi
 # Straight from the remote rather than the mirror, since the mirror belongs to
 # the build user and this runs as the runtime user. One network call, and no
 # local state that could be stale.
+[ -n "${TRACK_BRANCH:-}" ] \
+  || die "this instance follows no branch, so there is nothing to converge on." \
+         "" \
+         "It runs the release ./deploy.sh last named. To move it, name another:" \
+         "" \
+         "  ./deploy.sh $DOMAIN <release-tag>"
+
 step "resolving $TRACK_BRANCH"
 sha="$(git ls-remote "$APP_REPO" "refs/heads/$TRACK_BRANCH" | cut -f1)"
 [ -n "$sha" ] || die "$APP_REPO has no branch $TRACK_BRANCH."
