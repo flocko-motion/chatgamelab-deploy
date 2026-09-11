@@ -27,8 +27,24 @@ services:
       POSTGRES_DB: chatgamelab
       POSTGRES_USER: chatgamelab
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+      # docker/db/backup.sh requires both by name.
+      DB_NAME: ${DB_DATABASE}
+      DB_USER: ${DB_USER}
+      # Off unless a destination has been configured on the box; backup.sh
+      # exits 0 immediately when it is not "true".
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-false}
+      BACKUP_SSH_HOST: ${BACKUP_SSH_HOST:-}
+      BACKUP_SSH_PORT: ${BACKUP_SSH_PORT:-22}
+      BACKUP_SSH_USER: ${BACKUP_SSH_USER:-}
+      BACKUP_PATH: ${BACKUP_PATH:-backups}
+      BACKUP_SSH_KEY: /run/secrets/backup_key
     volumes:
       - db_data:/var/lib/postgresql
+      # Always mounted, so the stack starts whether or not backups are
+      # configured — ansible creates the file empty and box/cgl-secrets fills
+      # it. A key that is never read costs nothing; a mount that sometimes
+      # exists would mean two compose files.
+      - ${BACKUP_KEY_PATH}:/run/secrets/backup_key:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chatgamelab -d chatgamelab"]
       interval: 5s

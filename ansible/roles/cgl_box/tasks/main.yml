@@ -77,6 +77,40 @@
     group: "{{ runtime_user }}"
     mode: "0644"
 
+# Created empty so the compose mount always resolves; box/cgl-secrets fills it
+# when a destination is given. force: false, so a ground sweep never overwrites
+# a key that is in use.
+- name: Ensure the backup key file exists, readable to nobody else
+  ansible.builtin.copy:
+    dest: "{{ runtime_home }}/backup_key"
+    content: ""
+    owner: "{{ runtime_user }}"
+    group: "{{ runtime_user }}"
+    mode: "0600"
+    force: false
+
+- name: Install the nightly backup unit and its timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - cgl-backup.service
+    - cgl-backup.timer
+  notify: reload systemd
+
+- name: Reload systemd before starting the timer
+  ansible.builtin.meta: flush_handlers
+
+# Enabled unconditionally: backup.sh exits 0 the moment it sees
+# BACKUP_ENABLED is not "true", so a box with no destination runs a no-op
+# nightly rather than needing the timer added later by someone who remembers.
+- name: Enable the nightly backup
+  ansible.builtin.systemd_service:
+    name: cgl-backup.timer
+    enabled: true
+    state: started
+
 - name: Template the paths phase two works with
   ansible.builtin.template:
     src: box.env.j2

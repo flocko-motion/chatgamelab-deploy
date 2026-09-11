@@ -533,6 +533,51 @@ if [ "$setup_needed" -eq 1 ] || [ "${FORCE_SETUP:-0}" = "1" ]; then
   ssh_works "$runtime_user" || die "Ground setup finished and $runtime_user@$host still refuses the key."
 fi
 
+# --------------------------------------------------------- backup destination
+
+# Reported every run, and changed only when you say so. The one genuine secret
+# in this deployment — the SSH key the database container uploads dumps with —
+# is given here interactively and lives on the box from then on, so it stays in
+# your password manager and never in this repository.
+echo ">> backups"
+if ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' check"; then
+  backup_prompt="Replace the backup destination? [y/N] "
+else
+  backup_prompt="Set the backup destination now? [y/N] "
+fi
+printf '   %s' "$backup_prompt"
+read -r answer
+case "$answer" in
+  y|Y)
+    printf '   SFTP host: ';            read -r b_host
+    printf '   SFTP port [22]: ';       read -r b_port
+    printf '   SFTP user: ';            read -r b_user
+    printf '   remote path [backups]: '; read -r b_path
+    printf '   private key file: ';     read -r b_key
+    [ -n "$b_host" ] && [ -n "$b_user" ] \
+      || die "host and user are both needed; nothing has been changed."
+    [ -r "$b_key" ] || die "cannot read $b_key; nothing has been changed."
+    ssh-keygen -y -f "$b_key" >/dev/null 2>&1 \
+      || die "$b_key is not a private key ssh can read; nothing has been changed."
+
+    # base64 because an env file has no multi-line values, and -w0 is GNU-only.
+    key_b64="$(base64 -w0 < "$b_key" 2>/dev/null || base64 < "$b_key" | tr -d '\n')"
+    # Piped straight over ssh rather than written anywhere here: the key never
+    # touches this machine's disk outside the file it already lives in.
+    {
+      printf 'BACKUP_ENABLED=true\n'
+      printf 'BACKUP_SSH_HOST=%s\n' "$b_host"
+      printf 'BACKUP_SSH_PORT=%s\n' "${b_port:-22}"
+      printf 'BACKUP_SSH_USER=%s\n' "$b_user"
+      printf 'BACKUP_PATH=%s\n' "${b_path:-backups}"
+      printf 'BACKUP_SSH_KEY_B64=%s\n' "$key_b64"
+    } | ssh $ssh_opts "$runtime_user@$host" "umask 077 && cat > '$runtime_home/secrets.env'"
+    ssh $ssh_opts "$runtime_user@$host" "'$deploy_clone_remote/box/cgl-secrets' install" \
+      || die "The box refused the backup destination; nothing has been deployed."
+    ;;
+  *) : ;;
+esac
+
 # ------------------------------------------------------------- the trigger
 
 # Nobody ever needs to read this secret — it exists only so the box can tell

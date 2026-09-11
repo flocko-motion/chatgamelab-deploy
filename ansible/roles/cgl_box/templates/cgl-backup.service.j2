@@ -1,0 +1,16 @@
+# Managed by ansible (roles/cgl_box).
+#
+# Runs the application's own backup script inside the database container
+# (docker/db/backup.sh), which pg_dumps, gzips and sends the result over SFTP.
+# It exits 0 without doing anything while BACKUP_ENABLED is not "true".
+[Unit]
+Description=chatgamelab database backup
+
+[Service]
+Type=oneshot
+User={{ runtime_user }}
+Group={{ runtime_user }}
+Environment=XDG_RUNTIME_DIR=/run/user/{{ runtime_uid }}
+ExecStart=/usr/bin/podman exec chatgamelab-db /usr/local/bin/backup.sh
+# A media-heavy dump over SFTP is slow; generous rather than unbounded.
+TimeoutStartSec=2h

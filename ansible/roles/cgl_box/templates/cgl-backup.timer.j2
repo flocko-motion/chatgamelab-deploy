@@ -1,0 +1,11 @@
+# Managed by ansible (roles/cgl_box).
+[Unit]
+Description=Nightly chatgamelab database backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target
