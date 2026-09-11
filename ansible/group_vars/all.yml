@@ -14,6 +14,23 @@
 # differently. The symlink stays valid across that.
 ansible_python_interpreter: /usr/bin/python3
 
+# Where an instance's images come from, per host:
+#
+#   build     the box compiles them from source, so it can run any commit
+#             rather than only the ones a registry holds. Wants ~1.7 GB free
+#             during a build and a toolchain on the box. What development uses.
+#   registry  the box pulls what CI published, by tag. No Node, no Go, no
+#             build user, no mirror — and the artefact is the one CI tested
+#             rather than a local recompilation. What production uses.
+#
+# host_vars sets it; this is the default so an omission fails safe, towards the
+# cheaper and more constrained of the two.
+image_source: registry
+
+# Read only when image_source is "registry". Public, so the box pulls with no
+# credential of any kind.
+image_registry: ghcr.io/flocko-motion
+
 app_repo: https://github.com/flocko-motion/chatgamelab.git
 deploy_repo: https://github.com/flocko-motion/chatgamelab-deploy.git
 
@@ -41,6 +58,18 @@ runtime_user: cgl
 runtime_home: /var/lib/cgl
 build_user: cgl-build
 build_home: /var/lib/cgl-build
+
+# The unprivileged users this host actually needs. The build user exists only
+# where the box compiles — on a pulling instance it would be surface with
+# nothing to do, and surface is the thing a production box inherited by someone
+# else should have least of.
+#
+# The subordinate ranges are 65536 apart and never overlap, so neither
+# namespace can reach the other's files even by uid collision.
+box_users: >-
+  {{ [{'name': runtime_user, 'home': runtime_home, 'base': 200000}]
+     + ([{'name': build_user, 'home': build_home, 'base': 300000}]
+        if image_source == 'build' else []) }}
 
 # Where the deploy repository clones itself on the box. Phase two runs from
 # here, so the box redeploys without a laptop in the loop.

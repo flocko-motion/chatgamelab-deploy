@@ -14,7 +14,10 @@
     - { path: "{{ deploy_base }}", owner: root }
     - { path: "{{ deploy_clone }}", owner: "{{ runtime_user }}" }
 
+# Both only exist where the box builds: a pulling instance has no second user
+# to hand images over from, and no source to compile.
 - name: Create the handoff directory
+  when: image_source == 'build'
   ansible.builtin.file:
     path: "{{ handoff_dir }}"
     state: directory
@@ -54,6 +57,7 @@
 # commit checkoutable without depending on GitHub serving arbitrary SHAs to a
 # fetch. Owned by the build user, since building is all it is for.
 - name: Mirror the application repository
+  when: image_source == 'build'
   ansible.builtin.git:
     repo: "{{ app_repo }}"
     dest: "{{ app_mirror }}"

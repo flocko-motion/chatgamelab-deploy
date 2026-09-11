@@ -35,12 +35,12 @@
   ansible.builtin.file:
     path: "{{ item.home }}/.config/systemd/user"
     state: directory
-    owner: "{{ item.user }}"
-    group: "{{ item.user }}"
+    owner: "{{ item.name }}"
+    group: "{{ item.name }}"
     mode: "0755"
-  loop:
-    - { user: "{{ runtime_user }}", home: "{{ runtime_home }}" }
-    - { user: "{{ build_user }}", home: "{{ build_home }}" }
+  loop: "{{ box_users }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 # Enabled for the runtime user alone. The build user needs podman to build,
 # which is a fork/exec of buildah and needs no socket at all — so it is not
@@ -65,7 +65,9 @@
 #
 # A systemd timer rather than cron, because a minimal Debian ships no crontab
 # and everything else here is already systemd-shaped.
+# Nothing to prune where nothing builds.
 - name: Install the build cache prune unit and its timer
+  when: image_source == 'build'
   ansible.builtin.template:
     src: "{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
@@ -79,6 +81,7 @@
   ansible.builtin.meta: flush_handlers
 
 - name: Enable the weekly prune
+  when: image_source == 'build'
   ansible.builtin.systemd_service:
     name: cgl-build-prune.timer
     enabled: true

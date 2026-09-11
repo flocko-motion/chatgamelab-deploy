@@ -1,9 +1,11 @@
 # The stack as this box runs it. Derived from the application repository's own
 # docker-compose.yml, with four deliberate differences:
 #
-#   - Images are local and tagged by commit SHA, since the box builds them
-#     itself. That is what makes any commit deployable, and what makes
-#     switching back to one already built take seconds.
+#   - The image reference is composed, because an instance either builds or
+#     pulls. A building box gets IMAGE_PREFIX=localhost and IMAGE_TAG=<commit
+#     sha>, which is what makes any commit deployable and what makes returning
+#     to one already built take seconds. A pulling box gets the registry and a
+#     release tag, so it runs the artefact CI tested.
 #   - web publishes a port on localhost. Under Coolify the proxy reached the
 #     container directly; here nginx on the host is the sole public entry
 #     point, and a rootless container cannot bind below 1024 anyway.
@@ -19,7 +21,7 @@
 
 services:
   db:
-    image: localhost/chatgamelab-db:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/chatgamelab-db:${IMAGE_TAG}
     container_name: chatgamelab-db
     environment:
       POSTGRES_DB: chatgamelab
@@ -35,7 +37,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: localhost/chatgamelab-backend:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/chatgamelab-backend:${IMAGE_TAG}
     container_name: chatgamelab-backend
     environment:
       DB_HOST: db
@@ -78,7 +80,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: localhost/chatgamelab-web:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/chatgamelab-web:${IMAGE_TAG}
     container_name: chatgamelab-web
     environment:
       API_BASE_URL: ${API_BASE_URL}

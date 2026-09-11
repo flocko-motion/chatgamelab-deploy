@@ -10,10 +10,13 @@
 # with its data intact, which a destroy-first ordering would not.
 . "$(dirname "$0")/lib.sh"
 
-deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""; force_rebuild=0
+deploy_sha=""; app_sha=""; target_migration=""; reset_db=0; admin_email=""; force_rebuild=0; image_tag=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --force-rebuild)    force_rebuild=1 ;;
+    # The registry tag, on a pulling instance. Absent on a building one, where
+    # the images are tagged by commit and the sha is the tag.
+    --image-tag)        shift; image_tag="${1:-}" ;;
     --deploy-sha)       shift; deploy_sha="${1:-}" ;;
     --app-sha)          shift; app_sha="${1:-}" ;;
     --target-migration) shift; target_migration="${1:-}" ;;
@@ -56,29 +59,45 @@ have_all_images() {
   return 0
 }
 
-step "images for $short"
-if [ "$force_rebuild" -eq 0 ] && have_all_images; then
-  say "already in the local store — no build needed"
+# An instance either builds its images or pulls them, and which it does is a
+# property of the box rather than of this deploy (group_vars: image_source).
+#
+# Building lets it run any commit, at the cost of a toolchain, a second
+# unprivileged user, and ~1.7 GB of memory while it works. Pulling gets the
+# artefact CI tested and needs none of that, at the cost of only ever running
+# what CI published. Production pulls; development builds.
+if [ "${IMAGE_SOURCE:-build}" = "registry" ]; then
+  [ -n "$image_tag" ] || die "this instance pulls its images, so it needs --image-tag." \
+                             "./deploy.sh supplies it from the release tag you name."
+  step "images for $image_tag"
+  say "pulling from the registry"
+  IMAGE_TAG="$image_tag" compose pull 2>&1 | sed 's/^/   /'
 else
-  if [ "$force_rebuild" -eq 1 ]; then
-    say "rebuilding on request, whatever is in the store"
+  image_tag="$app_sha"
+  step "images for $short"
+  if [ "$force_rebuild" -eq 0 ] && have_all_images; then
+    say "already in the local store — no build needed"
   else
-    say "not built here yet"
-  fi
-  # The one sudoers entry on the box (/etc/sudoers.d/50-cgl-build). The build
-  # runs as a user that can reach neither the containers nor the database
-  # volume, because it is the step that executes other people's code.
-  build_args="--app-sha $app_sha"
-  [ "$force_rebuild" -eq 1 ] && build_args="$build_args --force-rebuild"
-  # shellcheck disable=SC2086
-  sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" $build_args
+    if [ "$force_rebuild" -eq 1 ]; then
+      say "rebuilding on request, whatever is in the store"
+    else
+      say "not built here yet"
+    fi
+    # The one sudoers entry on the box (/etc/sudoers.d/50-cgl-build). The build
+    # runs as a user that can reach neither the containers nor the database
+    # volume, because it is the step that executes other people's code.
+    build_args="--app-sha $app_sha"
+    [ "$force_rebuild" -eq 1 ] && build_args="$build_args --force-rebuild"
+    # shellcheck disable=SC2086
+    sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" $build_args
 
-  archive="$HANDOFF_DIR/$app_sha.tar"
-  [ -f "$archive" ] || die "the build reported success and left no archive at $archive."
-  step "loading the built images"
-  podman load --input "$archive" | sed 's/^/   /'
-  rm -f "$archive"
-  have_all_images || die "loaded the archive and the images are still not all present."
+    archive="$HANDOFF_DIR/$app_sha.tar"
+    [ -f "$archive" ] || die "the build reported success and left no archive at $archive."
+    step "loading the built images"
+    podman load --input "$archive" | sed 's/^/   /'
+    rm -f "$archive"
+    have_all_images || die "loaded the archive and the images are still not all present."
+  fi
 fi
 
 # ------------------------------------------------------------- environment
@@ -156,15 +175,15 @@ fi
 
 # --------------------------------------------------------------- switching
 
-step "starting $short"
-IMAGE_TAG="$app_sha" compose up --detach --remove-orphans 2>&1 | sed 's/^/   /'
+step "starting ${image_tag}"
+IMAGE_TAG="$image_tag" compose up --detach --remove-orphans 2>&1 | sed 's/^/   /'
 
 # `up -d` reports whether it started a container, and not whether it stayed up:
 # anything that crash-loops passes it silently otherwise.
 step "waiting for the stack to settle"
 settled=0
 for _ in $(seq 1 60); do
-  running="$(IMAGE_TAG="$app_sha" compose ps --status running --services 2>/dev/null | tr '\n' ' ')"
+  running="$(IMAGE_TAG="$image_tag" compose ps --status running --services 2>/dev/null | tr '\n' ' ')"
   case " $running " in
     *" db "*) case " $running " in *" backend "*) case " $running " in
       *" web "*) settled=1 ;; esac ;; esac ;;
@@ -177,7 +196,7 @@ if [ "$settled" -ne 1 ]; then
   echo >&2
   echo "   The stack did not settle. Running: ${running:-nothing}" >&2
   echo >&2
-  IMAGE_TAG="$app_sha" compose logs --tail=40 2>&1 | sed 's/^/   /' >&2
+  IMAGE_TAG="$image_tag" compose logs --tail=40 2>&1 | sed 's/^/   /' >&2
   die "" "The previous images are still in the store, so an earlier commit can be" \
          "redeployed in seconds:" \
          "" \

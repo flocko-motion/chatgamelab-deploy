@@ -97,9 +97,7 @@
     shell: /bin/bash
     create_home: true
     system: true
-  loop:
-    - { name: "{{ runtime_user }}", home: "{{ runtime_home }}" }
-    - { name: "{{ build_user }}", home: "{{ build_home }}" }
+  loop: "{{ box_users }}"
 
 # Cloud images sometimes ship /etc/subuid empty, and a rootless container
 # without a subordinate range fails with a message about newuidmap that says
@@ -131,9 +129,7 @@
     --add-subuids {{ item.base }}-{{ item.base + 65535 }}
     --add-subgids {{ item.base }}-{{ item.base + 65535 }}
     {{ item.name }}
-  loop:
-    - { name: "{{ runtime_user }}", base: 200000 }
-    - { name: "{{ build_user }}", base: 300000 }
+  loop: "{{ box_users }}"
   # The colon matters: without it, "cgl" would match the cgl-build line and
   # the runtime user would silently never get a range.
   when: (item.name ~ ':') not in (subuid_file.content | b64decode)
@@ -155,13 +151,11 @@
     runtime_user_info:
       uid: "{{ ansible_facts['getent_passwd'][runtime_user][1] }}"
     build_user_info:
-      uid: "{{ ansible_facts['getent_passwd'][build_user][1] }}"
+      uid: "{{ ansible_facts['getent_passwd'][build_user][1] if image_source == 'build' else '' }}"
 
 - name: Enable lingering so user units survive logout
-  ansible.builtin.command: "loginctl enable-linger {{ item }}"
-  loop:
-    - "{{ runtime_user }}"
-    - "{{ build_user }}"
+  ansible.builtin.command: "loginctl enable-linger {{ item.name }}"
+  loop: "{{ box_users }}"
   changed_when: false
 
 # A user manager started by an ssh login before lingering existed stays active
@@ -174,17 +168,19 @@
 # an outage on a converged one.
 - name: Check whether each user manager has its session bus
   ansible.builtin.stat:
-    path: "/run/user/{{ item.uid }}/bus"
+    path: "/run/user/{{ ansible_facts['getent_passwd'][item.name][1] }}/bus"
   register: user_bus
-  loop:
-    - { name: "{{ runtime_user }}", uid: "{{ ansible_facts['getent_passwd'][runtime_user][1] }}" }
-    - { name: "{{ build_user }}", uid: "{{ ansible_facts['getent_passwd'][build_user][1] }}" }
+  loop: "{{ box_users }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: Restart the user manager where it is missing
   ansible.builtin.systemd_service:
-    name: "user@{{ item.item.uid }}.service"
+    name: "user@{{ ansible_facts['getent_passwd'][item.item.name][1] }}.service"
     state: restarted
   loop: "{{ user_bus.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
   when: not item.stat.exists
 
 - name: Authorize the deploy keys for the runtime user
@@ -203,6 +199,7 @@
 # which is a downgrade. Nothing here lets build_user become runtime_user, which
 # is the boundary that protects the database.
 - name: Let the runtime user run the build as the build user
+  when: image_source == 'build'
   ansible.builtin.copy:
     dest: /etc/sudoers.d/50-cgl-build
     content: |

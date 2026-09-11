@@ -205,6 +205,10 @@ hook_path_val="$(yaml_get hook_path "$all_vars")"
 app_repo_slug="$(yaml_get app_repo_slug "$all_vars")"
 track_branch="$(yaml_get track_branch "$vars_file")"
 update_interval="$(yaml_get update_interval "$all_vars")"
+# Per-host, defaulting to the safer of the two (see group_vars).
+image_source="$(yaml_get image_source "$vars_file")"
+[ -n "$image_source" ] || image_source="$(yaml_get image_source "$all_vars")"
+image_registry="$(yaml_get image_registry "$all_vars")"
 # Read rather than assumed, since group_vars is where the path is decided and
 # it is not under runtime_home.
 deploy_base="$(yaml_get deploy_base "$all_vars")"
@@ -248,6 +252,28 @@ if ! git --git-dir="$mirror" for-each-ref --contains "$sha" --count=1 \
 fi
 
 short="$(git --git-dir="$mirror" rev-parse --short=7 "$sha")"
+
+# A pulling instance runs what CI published, and CI publishes one image per
+# release — so the ref has to be a release tag, and the image tag is that
+# version. Refused here with the reason rather than as a registry 404 later.
+image_tag=""
+if [ "$image_source" = "registry" ]; then
+  exact="$(git --git-dir="$mirror" describe --tags --exact-match "$sha" 2>/dev/null || true)"
+  case "$exact" in
+    v[0-9]*.[0-9]*.[0-9]*) image_tag="${exact#v}" ;;
+    *)
+      die "$server pulls its images, so it can only deploy a published release." \
+          "" \
+          "'$commit' resolves to $short, which carries no vX.Y.Z tag. Name a" \
+          "release tag instead:" \
+          "" \
+          "  $(git --git-dir="$mirror" tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | awk '!/-/' | head -5 | tr '\n' ' ')" \
+          "" \
+          "Deploying an arbitrary commit needs image_source: build, and a box" \
+          "with the memory to compile on."
+      ;;
+  esac
+fi
 reached_by="$(git --git-dir="$mirror" for-each-ref --contains "$sha" --count=3 \
   --format='%(refname:short)' refs/heads refs/tags | tr '\n' ' ')"
 subject="$(git --git-dir="$mirror" log -1 --format=%s "$sha")"
@@ -396,11 +422,23 @@ require_box_supported() { # blob
 
   [ "$systemd" = "yes" ] || die "No systemctl on the box; this deployment is systemd-shaped throughout."
 
-  # The Vite build is what sets this floor: tsc and vite run beside Postgres,
-  # the backend and the web container on the same box.
-  if [ "$mem_mb" -lt 3800 ]; then
-    die "${mem_mb} MB of RAM, and the frontend build wants about 4 GB to run" \
-        "beside the stack. Either resize the box, or have CI build instead."
+  # Measured rather than guessed: a full three-image rebuild peaked at 1636 MB
+  # of total system use, stack included, and never touched swap. So a building
+  # box wants ~1.9 GB, and one that only pulls needs enough to run the stack,
+  # which idles at 751 MB.
+  if [ "$image_source" = "build" ]; then
+    if [ "$mem_mb" -lt 1900 ]; then
+      die "${mem_mb} MB of RAM, and building here peaks around 1.7 GB." \
+          "" \
+          "Either give this instance a bigger box, or set image_source:" \
+          "registry in ansible/host_vars/$server.yml so it pulls what CI" \
+          "published instead of compiling."
+    fi
+    if [ "$mem_mb" -lt 2600 ]; then
+      echo "   note: ${mem_mb} MB leaves the build about $((mem_mb - 1700)) MB spare — swap will be used"
+    fi
+  elif [ "$mem_mb" -lt 1200 ]; then
+    die "${mem_mb} MB of RAM, and the stack alone idles around 750 MB."
   fi
   if [ "$disk_gb" -lt 15 ]; then
     die "${disk_gb} GB free on /, which the image store and build cache will" \
@@ -537,6 +575,33 @@ ssh $ssh_opts "$runtime_user@$host" \
          "If the clone is missing entirely, re-run with FORCE_SETUP=1 to make" \
          "ground setup recreate it."
 
+# Checked from here, where the answer can name the release and the workflow,
+# rather than as a pull failure on the box. Anonymous, because the packages are
+# public — which is also why the box needs no registry credential.
+if [ -n "$image_tag" ]; then
+  echo ">> checking the registry holds $image_tag"
+  registry_host="${image_registry%%/*}"
+  registry_path="${image_registry#*/}"
+  for image in db backend web; do
+    repo="$registry_path/chatgamelab-$image"
+    token="$(curl -fsS "https://$registry_host/token?scope=repository:$repo:pull&service=$registry_host" \
+      | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    code="$(curl -sS -o /dev/null -w '%{http_code}' \
+      -H "Authorization: Bearer $token" \
+      -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "https://$registry_host/v2/$repo/manifests/$image_tag")"
+    case "$code" in
+      200) echo "   chatgamelab-$image:$image_tag — present" ;;
+      *)   die "   chatgamelab-$image:$image_tag — the registry answered $code" \
+               "" \
+               "That release has no published image. CI builds them on a push to" \
+               "main, so a tag created by hand has none. Check the run:" \
+               "" \
+               "  gh run list --workflow=docker-image.yml --repo $app_repo_slug" ;;
+    esac
+  done
+fi
+
 echo ">> phase two on the box"
 set -- "$deploy_clone_remote/box/cgl-deploy" \
   --deploy-sha "$self_sha" \
@@ -544,6 +609,7 @@ set -- "$deploy_clone_remote/box/cgl-deploy" \
   --target-migration "$target_migration"
 [ "$reset_db" -eq 1 ] && set -- "$@" --reset-db "$admin_email"
 [ "$force_rebuild" -eq 1 ] && set -- "$@" --force-rebuild
+[ -n "$image_tag" ] && set -- "$@" --image-tag "$image_tag"
 
 # -t so the box's progress arrives as it happens rather than in one lump at the
 # end: a build is minutes long and watching it is the point.
