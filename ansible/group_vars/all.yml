@@ -163,7 +163,12 @@ hook_secret_path: "{{ runtime_home }}/hook-secret"
 
 # What that same secret is called on the GitHub side, in the application
 # repository whose workflow signs with it.
-hook_secret_name: CGL_DEPLOY_HOOK_SECRET
+# Per instance, because two instances following two branches need two of each
+# — one shared pair would have whichever deployed last pointing CI at itself.
+# The suffix is the instance's own name, uppercased with dots as underscores,
+# which is what GitHub's secret and variable names allow.
+hook_secret_name: "CGL_HOOK_SECRET_{{ inventory_hostname | upper | replace('.', '_') | replace('-', '_') }}"
+hook_url_name: "CGL_HOOK_URL_{{ inventory_hostname | upper | replace('.', '_') | replace('-', '_') }}"
 app_repo_slug: flocko-motion/chatgamelab
 
 # Where the listener drops the file the update unit watches. Under /run

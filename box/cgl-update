@@ -40,6 +40,22 @@ sha="$(git ls-remote "$APP_REPO" "refs/heads/$TRACK_BRANCH" | cut -f1)"
 [ -n "$sha" ] || die "$APP_REPO has no branch $TRACK_BRANCH."
 say "${sha:0:7}"
 
+# A pulling instance runs published releases, so the branch head is only a
+# candidate when CI tagged it. Untagged, there is nothing in the registry to
+# deploy and the right answer is to wait for the next release rather than fail.
+image_tag=""
+if [ "${IMAGE_SOURCE:-build}" = "registry" ]; then
+  tag="$(git ls-remote --tags "$APP_REPO" \
+    | awk -v s="$sha" '$1 == s { print $2 }' \
+    | sed -n 's#^refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' | head -1)"
+  if [ -z "$tag" ]; then
+    say "${sha:0:7} carries no release tag — waiting for one"
+    exit 0
+  fi
+  image_tag="${tag#v}"
+  say "release $tag"
+fi
+
 deployed="$(cat "$RUNTIME_HOME/deployed-ref" 2>/dev/null || true)"
 if [ "$sha" = "$deployed" ]; then
   say "already at ${sha:0:7} — nothing to do"
@@ -54,16 +70,26 @@ fi
 # Asked of the build user because the worktree is the only place the answer
 # lives and only that account can read it. Cheap: a fetch and a checkout, no
 # build.
+# The migration high-water mark of the tree being deployed. A building
+# instance has a worktree to read it from; a pulling one has no source at all,
+# so it is read from the repository over https.
 step "reading the target's migration mark"
-target_migration="$(sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" \
-  --app-sha "$sha" --print-migration)" \
-  || die "could not prepare the worktree for $sha."
+if [ "${IMAGE_SOURCE:-build}" = "registry" ]; then
+  target_migration="$(git ls-remote "$APP_REPO" >/dev/null 2>&1 && \
+    curl -fsS "https://api.github.com/repos/${APP_REPO#https://github.com/}/contents/server/db/migrations?ref=$sha" \
+    | sed -n 's/.*"name": *"0*\([0-9][0-9]*\)_.*/\1/p' | sort -n | tail -1)"
+  [ -n "$target_migration" ] || die "could not read the migration set for $sha."
+else
+  target_migration="$(sudo -u "$BUILD_USER" "$DEPLOY_CLONE/box/cgl-build" \
+    --app-sha "$sha" --print-migration)" \
+    || die "could not prepare the worktree for $sha."
+fi
 say "up to $target_migration"
 
 # The deploy repo stays where it is: an automatic run deploys application
 # commits, never a change to the deployment itself. That remains ./deploy.sh's
 # job, and is what keeps a push here from reaching the box on its own.
-exec "$DEPLOY_CLONE/box/cgl-deploy" \
-  --deploy-sha "$(git -C "$DEPLOY_CLONE" rev-parse HEAD)" \
-  --app-sha "$sha" \
-  --target-migration "$target_migration"
+set -- --deploy-sha "$(git -C "$DEPLOY_CLONE" rev-parse HEAD)" \
+       --app-sha "$sha" --target-migration "$target_migration"
+[ -n "$image_tag" ] && set -- "$@" --image-tag "$image_tag"
+exec "$DEPLOY_CLONE/box/cgl-deploy" "$@"

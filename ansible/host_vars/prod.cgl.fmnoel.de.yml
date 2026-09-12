@@ -54,6 +54,16 @@ default_ref: main
 
 image_source: registry
 
-# No track_branch, deliberately. Nothing converges on production by itself —
-# there is no branch to follow, no trigger, and no timer. A release goes live
-# because somebody ran ./deploy.sh naming it.
+# Follows main, so this box holds whatever the live system holds without anyone
+# keeping the two in step by hand. While production runs elsewhere that is the
+# point of this instance: comparing it against a stale version proves nothing.
+#
+# It pulls images, so a merge to main that semantic-release did not tag leaves
+# nothing to deploy — box/cgl-update resolves main, finds no vX.Y.Z on it, and
+# reports that rather than failing. The next tagged release catches it up.
+#
+# Worth revisiting once this is the live system. Automatic deployment to
+# production is a real decision rather than a default, and the argument for it
+# here — staying in step with somewhere else — stops applying the moment there
+# is nowhere else.
+track_branch: main
