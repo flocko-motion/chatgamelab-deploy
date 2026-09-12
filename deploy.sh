@@ -255,7 +255,11 @@ app_repo="$(yaml_get app_repo "$all_vars")"
 runtime_user="$(yaml_get runtime_user "$all_vars")"
 runtime_home="$(yaml_get runtime_home "$all_vars")"
 hook_secret_path="$(yaml_get hook_secret_path "$all_vars" | sed "s#{{ runtime_home }}#$runtime_home#")"
-hook_secret_name="$(yaml_get hook_secret_name "$all_vars")"
+# Same transform the template does, since this reads group_vars rather than
+# rendering it: uppercase, dots and dashes to underscores.
+hook_suffix="$(printf '%s' "$server" | tr '[:lower:].-' '[:upper:]__')"
+hook_secret_name="CGL_HOOK_SECRET_$hook_suffix"
+hook_url_name="CGL_HOOK_URL_$hook_suffix"
 hook_path_val="$(yaml_get hook_path "$all_vars")"
 app_repo_slug="$(yaml_get app_repo_slug "$all_vars")"
 track_branch="$(yaml_get track_branch "$vars_file")"
@@ -840,13 +844,13 @@ rotate_hook_secret() {
   # name that no longer resolves — which is exactly what happened when this
   # instance became dev.cgl.fmnoel.de, and the workflow went on triggering
   # cgl.fmnoel.de into a NXDOMAIN for hours while the timer quietly covered it.
-  if ! gh variable set CGL_DEPLOY_HOOK_URL --repo "$app_repo_slug" \
+  if ! gh variable set "$hook_url_name" --repo "$app_repo_slug" \
        --body "https://$domain$hook_path_val" >/dev/null 2>&1; then
-    echo "   couldn't set CGL_DEPLOY_HOOK_URL on $app_repo_slug — CI will post" >&2
+    echo "   couldn't set $hook_url_name on $app_repo_slug — CI will post" >&2
     echo "   wherever it was last told to. Check 'gh auth status'." >&2
     return 1
   fi
-  echo "   CGL_DEPLOY_HOOK_URL set to https://$domain$hook_path_val"
+  echo "   $hook_url_name set to https://$domain$hook_path_val"
 }
 
 # Only for an instance that follows a branch. The secret and the URL are single
