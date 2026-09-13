@@ -1,0 +1,24 @@
+# Managed by ansible (roles/cgl_box).
+#
+# Brings the stack back after a reboot. Rootless podman has no daemon to
+# restore restart policies, and unattended-upgrades reboots this box for a
+# kernel update — so without this the site stays down until somebody notices.
+[Unit]
+Description=chatgamelab stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User={{ runtime_user }}
+Group={{ runtime_user }}
+Environment=XDG_RUNTIME_DIR=/run/user/{{ runtime_uid }}
+ExecStart={{ deploy_clone }}/box/cgl-stack up
+# Deliberately no ExecStop: a stop of this unit during shutdown must not tear
+# the stack down in a way that a deploy would then have to undo. The containers
+# stop with the machine.
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

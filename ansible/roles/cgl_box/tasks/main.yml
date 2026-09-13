@@ -89,12 +89,13 @@
     mode: "0600"
     force: false
 
-- name: Install the nightly backup unit and its timer
+- name: Install the stack and backup units
   ansible.builtin.template:
     src: "{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
     mode: "0644"
   loop:
+    - cgl-stack.service
     - cgl-backup.service
     - cgl-backup.timer
   notify: reload systemd
@@ -105,6 +106,14 @@
 # Enabled unconditionally: backup.sh exits 0 the moment it sees
 # BACKUP_ENABLED is not "true", so a box with no destination runs a no-op
 # nightly rather than needing the timer added later by someone who remembers.
+# Enabled, not started: starting it here would bring the stack up at whatever
+# was deployed before, in the middle of a run that is about to deploy something
+# else. Boot is the only time it should act.
+- name: Enable the stack at boot
+  ansible.builtin.systemd_service:
+    name: cgl-stack.service
+    enabled: true
+
 - name: Enable the nightly backup
   ansible.builtin.systemd_service:
     name: cgl-backup.timer
