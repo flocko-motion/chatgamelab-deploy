@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ChatGameLab – Wartungsarbeiten</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f8fa; --fg: #1c2430; --muted: #5a6673;
+    --card: #ffffff; --line: #e3e7ec; --accent: #2f7d8f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181d; --fg: #e8edf2; --muted: #9aa7b4;
+      --card: #1c2229; --line: #2b333c; --accent: #5fb3c6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex;
+    align-items: center; justify-content: center; padding: 24px;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 34rem; width: 100%; background: var(--card);
+    border: 1px solid var(--line); border-radius: 14px; padding: 40px 32px;
+  }
+  h1 { margin: 0 0 4px; font-size: 1.55rem; letter-spacing: -0.01em; }
+  .sub { color: var(--accent); font-weight: 600; margin: 0 0 24px; }
+  p { margin: 0 0 16px; }
+  .muted { color: var(--muted); font-size: 0.92rem; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0 20px; }
+  .en { color: var(--muted); font-size: 0.92rem; }
+  .en strong { color: var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>ChatGameLab</h1>
+  <p class="sub">Wartungsarbeiten</p>
+
+  <p>Wir ziehen gerade auf einen neuen Server um. Die Plattform ist in
+     Kürze wieder erreichbar.</p>
+
+  <p>Alle Spiele, Konten und Daten bleiben erhalten – sie werden
+     vollständig übernommen.</p>
+
+  <p class="muted">Bitte diese Seite in einigen Minuten neu laden.</p>
+
+  <hr>
+
+  <p class="en"><strong>Maintenance.</strong> ChatGameLab is moving to a new
+     server and will be back shortly. All games, accounts and data are being
+     migrated and will be preserved. Please reload in a few minutes.</p>
+</main>
+</body>
+</html>
