@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Bring the stack up at whatever this box last deployed. What the boot unit
+# runs, and what to run by hand after stopping the stack for any reason.
+#
+# It exists because rootless podman has no daemon to restore restart policies
+# at boot. podman-restart.service is the nearest equivalent and does not fit:
+# it starts only containers already created, and filters on
+# restart-policy=always while these carry unless-stopped. Left to that, a
+# kernel update would reboot the box at 03:00 and the site would stay down
+# until somebody noticed.
+. "$(dirname "$0")/lib.sh"
+
+# The image tag, which is a release version on a pulling instance and a commit
+# sha on a building one. Recorded by cgl-deploy; deployed-ref is the fallback
+# for a box that last deployed before that was written, where the two agree.
+tag="$(cat "$RUNTIME_HOME/deployed-tag" 2>/dev/null || true)"
+[ -n "$tag" ] || tag="$(cat "$RUNTIME_HOME/deployed-ref" 2>/dev/null || true)"
+[ -n "$tag" ] || die "nothing deployed here yet — run ./deploy.sh against this instance."
+
+case "${1:-up}" in
+  up)
+    step "starting ${tag}"
+    IMAGE_TAG="$tag" compose up --detach --remove-orphans 2>&1 | sed 's/^/   /'
+    ;;
+  down)
+    step "stopping ${tag}"
+    IMAGE_TAG="$tag" compose down 2>&1 | sed 's/^/   /'
+    ;;
+  *) die "usage: cgl-stack up|down" ;;
+esac

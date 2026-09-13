@@ -347,4 +347,7 @@ fi
 # Recorded last, so it names a commit that actually came up rather than one
 # that was merely asked for.
 printf '%s\n' "$app_sha" > "$RUNTIME_HOME/deployed-ref"
+# The image tag too, which differs from the commit on a pulling instance — it
+# is what box/cgl-stack needs to bring this same version back after a reboot.
+printf '%s\n' "$image_tag" > "$RUNTIME_HOME/deployed-tag"
 step "$short is up"
