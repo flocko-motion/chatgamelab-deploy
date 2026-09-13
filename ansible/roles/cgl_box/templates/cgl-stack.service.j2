@@ -5,8 +5,11 @@
 # kernel update — so without this the site stays down until somebody notices.
 [Unit]
 Description=chatgamelab stack
-After=network-online.target
-Wants=network-online.target
+# The user manager owns podman's socket, so this has to follow it. Ordering
+# alone is not enough — the socket appears some way into that manager's own
+# startup — so box/cgl-stack waits for the socket as well.
+After=network-online.target user@{{ runtime_uid }}.service
+Wants=network-online.target user@{{ runtime_uid }}.service
 
 [Service]
 Type=oneshot
@@ -19,6 +22,10 @@ ExecStart={{ deploy_clone }}/box/cgl-stack up
 # the stack down in a way that a deploy would then have to undo. The containers
 # stop with the machine.
 TimeoutStartSec=15min
+# A boot that loses the race anyway gets another go, rather than leaving the
+# site down until somebody looks.
+Restart=on-failure
+RestartSec=30s
 
 [Install]
 WantedBy=multi-user.target

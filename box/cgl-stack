@@ -17,8 +17,24 @@ tag="$(cat "$RUNTIME_HOME/deployed-tag" 2>/dev/null || true)"
 [ -n "$tag" ] || tag="$(cat "$RUNTIME_HOME/deployed-ref" 2>/dev/null || true)"
 [ -n "$tag" ] || die "nothing deployed here yet — run ./deploy.sh against this instance."
 
+# At boot this races the user manager: podman.socket comes up as that reaches
+# default.target, and a system unit ordered on network-online.target gets there
+# first. Waited for here rather than trusted to unit ordering alone, because
+# the ordering is the part that is easy to get subtly wrong and this is what
+# stands between an unattended 03:00 reboot and a site that stays down.
+wait_for_podman() {
+  local i
+  for i in $(seq 1 90); do
+    [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] \
+      && compose version >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  die "podman's socket never appeared at $XDG_RUNTIME_DIR/podman/podman.sock"
+}
+
 case "${1:-up}" in
   up)
+    wait_for_podman
     step "starting ${tag}"
     IMAGE_TAG="$tag" compose up --detach --remove-orphans 2>&1 | sed 's/^/   /'
     ;;
