@@ -97,3 +97,31 @@ sftp_at() {
   sftp -b - -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 \
     -i "$BACKUP_KEY" -P "$bport" "$buser@$bhost" 2>&1
 }
+
+# One deploy at a time on this box, whoever started it — a hand-run from any
+# machine, the webhook, or the timer. Without it two runs interleave: both drop
+# the volume, both restore, and the box ends up serving whichever finished
+# last with a database from the other.
+#
+# The lock file doubles as the record of who holds it, so a contender can say
+# so rather than reporting a bare failure. Opened >> rather than >, rather than
+# truncating the very content the contender wants to read.
+DEPLOY_LOCK="$RUNTIME_HOME/.deploy.lock"
+
+take_deploy_lock() { # what-is-being-deployed
+  # cgl-update takes the lock before it builds and hands this process the open
+  # descriptor, so taking it again here would deadlock against itself.
+  [ "${CGL_DEPLOY_LOCKED:-0}" = "1" ] && return 0
+  exec 9>>"$DEPLOY_LOCK"
+  if ! flock -n 9; then
+    echo "A deploy is already running on this box:" >&2
+    sed 's/^/  /' "$DEPLOY_LOCK" >&2 2>/dev/null || true
+    echo >&2
+    echo "Wait for it to finish, or investigate if it looks stuck. Two at once" >&2
+    echo "would both drop the volume and both restore." >&2
+    exit 1
+  fi
+  : > "$DEPLOY_LOCK"
+  printf 'started %s by %s (pid %s)\ndeploying %s\n' \
+    "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$(id -un)" "$$" "$1" >&9
+}

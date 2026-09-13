@@ -18,12 +18,18 @@ rm -f "$HOOK_RUNTIME_DIR/trigger" 2>/dev/null || true
 # systemd already serialises the two routes; this catches a hand-run alongside
 # them. Non-blocking, because a second convergence on the same branch has
 # nothing to add once the first is under way.
-lock="$RUNTIME_HOME/.update.lock"
-exec 9>"$lock"
+# The same lock cgl-deploy uses, taken here so a build does not start behind a
+# deploy that is already under way. The descriptor survives the exec below, so
+# CGL_DEPLOY_LOCKED tells cgl-deploy the lock is already held on its behalf.
+exec 9>>"$DEPLOY_LOCK"
 if ! flock -n 9; then
   say "a deploy is already running — leaving it to finish"
   exit 0
 fi
+: > "$DEPLOY_LOCK"
+printf 'started %s by %s (pid %s)\ndeploying %s\n' \
+  "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$(id -un)" "$$" "$TRACK_BRANCH" >&9
+export CGL_DEPLOY_LOCKED=1
 
 # Straight from the remote rather than the mirror, since the mirror belongs to
 # the build user and this runs as the runtime user. One network call, and no

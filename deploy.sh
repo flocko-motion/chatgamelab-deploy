@@ -570,6 +570,38 @@ if [ "$setup_needed" -eq 1 ] || [ "${FORCE_SETUP:-0}" = "1" ]; then
   ssh_works "$runtime_user" || die "Ground setup finished and $runtime_user@$host still refuses the key."
 fi
 
+# ----------------------------------------------------- is one already running
+
+# Asked before ground setup rather than left to phase two, so a second run
+# stops before ansible starts rewriting files the first one is reading.
+#
+# The test is whether the lock is actually held, not whether the file exists: a
+# run that died leaves the file behind but the kernel drops its flock, so a
+# stale file is information rather than an obstacle.
+lock_remote="$runtime_home/.deploy.lock"
+lock_held=0
+ssh -n $ssh_opts "$runtime_user@$host" \
+  "flock -n 9 9>>'$lock_remote' 2>/dev/null" || lock_held=1
+
+if [ "$lock_held" -eq 1 ]; then
+  echo >&2
+  echo "A deploy is already running on $server:" >&2
+  ssh -n $ssh_opts "$runtime_user@$host" "cat '$lock_remote' 2>/dev/null" | sed 's/^/  /' >&2
+  echo >&2
+  echo "Two at once would both drop the volume and both restore, leaving the box" >&2
+  echo "serving whichever finished last against the other one's database." >&2
+  echo >&2
+  if [ ! -t 0 ]; then
+    die "Refusing, with nothing to ask on a run that has no terminal."
+  fi
+  printf 'Proceed anyway? Only if you know that run is dead. [y/N] ' >&2
+  read -r proceed || proceed=n
+  case "$proceed" in
+    y|Y) echo "   proceeding — the box's own lock will still refuse if it is genuinely running" >&2 ;;
+    *) die "Stopped. Nothing has been changed." ;;
+  esac
+fi
+
 # ------------------------------------------------------- the box's own copy
 
 # Brought up to date here, before anything runs out of it. Everything below

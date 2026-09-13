@@ -55,6 +55,8 @@ fi
 
 short="${app_sha}"; short="${short:0:7}"
 
+take_deploy_lock "${image_tag:-$short}"
+
 # ---------------------------------------------------------------- images
 
 have_all_images() {
