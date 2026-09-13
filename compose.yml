@@ -67,6 +67,16 @@ services:
       PUBLIC_URL: ${PUBLIC_URL}
       API_BASE_URL: ${API_BASE_URL}
       SENTRY_DSN_BACKEND: ${SENTRY_DSN_BACKEND}
+      # Read only to report backup health on /api/status: the backend grades
+      # the newest row in the backup logbook, and treats an unset
+      # BACKUP_ENABLED as "no backups configured" rather than as a fault. Sent
+      # here as well as to db, which is the half that actually takes them —
+      # without it a box with working backups still reports "disabled".
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-false}
+      # How old the newest successful run may be before /api/status calls it
+      # stale. The nightly timer runs daily, so the default of 48h tolerates
+      # one missed night before complaining.
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-48}
       # Backend-only: it turns on debug logging, db.Preseed's well-known dev
       # accounts, and two routes with no authentication, which the nginx vhost
       # refuses at the edge. The frontend is unaffected — its dev switch is
