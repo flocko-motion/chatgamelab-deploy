@@ -1,4 +1,4 @@
-# prod.cgl.fmnoel.de — production.
+# run.chatgamelab.eu — production.
 #
 # It pulls the images CI published rather than building them, so it runs the
 # artefact that was tested and carries no toolchain, no build user and no
@@ -23,13 +23,12 @@ certbot_email: webmaster@omnitopos.net
 # with the same consequence, and wants doing deliberately rather than as a side
 # effect of changing hosts.
 #
-#   Allowed Callback URLs   https://prod.cgl.fmnoel.de/auth/login/auth0/callback
-#   Allowed Logout URLs     https://prod.cgl.fmnoel.de/auth/logout/auth0/callback
-#   Allowed Web Origins     https://prod.cgl.fmnoel.de
+#   Allowed Callback URLs   https://run.chatgamelab.eu/auth/login/auth0/callback
+#   Allowed Logout URLs     https://run.chatgamelab.eu/auth/logout/auth0/callback
+#   Allowed Web Origins     https://run.chatgamelab.eu
 #
-# This host is a rehearsal: run.chatgamelab.eu is where production lands, and
-# that is a second host_vars file rather than a rename — a different
-# certificate, vhost and callback list against the same box.
+# This is production. It was rehearsed under prod.cgl.fmnoel.de on this same
+# box, with a restored dump and a verified sign-in, before the name moved.
 auth0_domain: chatgamelab.eu.auth0.com
 # The tenant's Management API, which is what production has always used.
 # Every tenant has it pre-associated with its applications, so it needs no
