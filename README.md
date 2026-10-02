@@ -188,6 +188,34 @@ deliberate and temporary by construction.
 See `docs/ci-trigger.md` for the application repository's side, and
 `docs/cutover.md` for moving production here from Coolify.
 
+### When a merge did not arrive
+
+Every tick, trigger or timer, leaves a record in one unit's journal:
+
+```
+ssh root@<server> systemctl status cgl-update.service      # failed, or inactive
+ssh root@<server> journalctl -u cgl-update.service -n 30   # the last tick
+ssh root@<server> cat ~cgl/deployed-ref                    # the SHA serving now
+```
+
+A healthy tick ends in one of these lines:
+
+| Line | Meaning |
+|---|---|
+| `already at <sha> — nothing to do` | The box serves the branch head. |
+| `<sha> carries no release tag — waiting for one` | A pulling instance (production) found an untagged head, which happens when semantic-release skipped a merge. It catches up at the next release; `./deploy.sh <server> <tag>` gets there sooner. |
+| `a deploy is already running — leaving it to finish` | A hand-run or an earlier tick holds the lock. |
+
+Any other ending is a failure. A failure repeats every 15 minutes until
+someone fixes it, and nothing reports it outside the journal. Once the cause is
+fixed under `box/` or `ansible/`, the box picks the fix up only from a hand-run
+`./deploy.sh <server>` (see *The two phases*); after that, the timer resumes
+on its own.
+
+To check that CI reached the box at all, look at
+`journalctl -u cgl-hook.service` for the listener and at the `webhook` job of
+the application's `docker-image.yml` run.
+
 ## Trust boundaries
 
 `cgl.fmnoel.de` is a private developer instance. Production is expected to pass
