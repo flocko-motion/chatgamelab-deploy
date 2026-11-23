@@ -1,0 +1,42 @@
+# dev.cgl.fmnoel.de: the development instance. It follows the prerelease
+# channel, so its admin can install every 2.x.y-dev.N.
+#
+# Keys: chatgamelab's deploy/example.yml. Every value here is public or
+# infrastructure; the secrets stay on the box (database password, backup key,
+# ADMIN_EMAILS).
+
+release_channel: prerelease
+
+certbot_email: webmaster@omnitopos.net
+
+ssh_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBX5yO7PLk458zxrqB8OxNTrbqInrDzVkk/+0W2BPY55 florian-metzger-noel"
+  - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCuXYNpMq+8EgKcI3jbW4TbzMBvVOCNeU/MvNddnmjtHbNR9FWXpBCnfkb0FW5odMskJdi+sqQK2nbUKTw6xGyRF1toMsAXJY8IheaTd16mnvHH/OZMcNB9cCbN6AYzeDlpzivaqL/nFeAb5GNDITHLjQyt5y2Bxsp6O+j0udQG9pSher8BeoGLLsaYyH4hGoL54RxjBTZeggYZgwGf/kuoAKe+EHpcX9q2WbpF4oyIg42Nibo3muINRG1h+GeL+VFvRofxsM1a+5ddnQW0ZgkoDd7ZGXyA19v3Q4VaBTuPy0qZE5bqrP9TsFjm9RDeunivymapi3T6Zmp2EqloM9fwGYtkDco5w98gg/xMsgKQ+K45WhgknqR4dGcK7E1wEg1e6T5mjrgNjNEfbOqJsrWuAk7H1JH0Gr9TBraphVI53XExGN0z98eap4alMsSX6T2hQCLpDmLYuwSGJIyplHjRhs2kqac+yK9n7nz1Yykhrz5hImn65+34zXgecg1izNk= flo@787dd836-a972-4ed4-b67e-c79bb791b4a7"
+  - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDCb/Tz1DeKxQP8NnOwXhikxMA/NiGvEXUGbyt6LBKXueH5ar23kSB6YIXWry90oS7/g9BPJVLBzv8o0IoSw24vYlRzlS0+iw2s6ph1Ykj7LTNH9jzazWC+m8CjstuD4H2ni83czhOWLc2p/WCa5BbDo1PP8Maj+PyNUFpIJebXEs01wwGS1/v2HsAMVvIaAvrQvhczvwu9VRcGgTkOz8mU6kxGhN2iWK5Wn3DfqgX00ILkMTMuaVbgt51pbPxHxE6w9HnLIPYH7p0WddejffKBWQ+P6rzr26LUHBzdlI+Fo/+KbNv5haL8bvfxZ09JgtQVheMYJDJ1FFIw5CQZ/SUQ9MlaT9WLY7X+rhPD6Ucfv3PRgQjIf1odmJwrVEstih+LpryVKSFWkvgPaAV5mfGaoNOZQI+JGwJkbDJ2J1J0oUHVL810lWa8l+oZWQtoGKzeCGVhCCXrUeAdSz1eD+OPDtA8YBY9x1N8QYj97a23odKZlLENQNwZVoxo3BK1Omk= flo@DESKTOP-UTS0MA1"
+
+# The Auth0 SPA of this instance, in its own Auth0 account. Allowed Callback
+# URLs, Allowed Logout URLs and Allowed Web Origins: https://dev.cgl.fmnoel.de
+auth0_domain: dev-txs0-7xb.eu.auth0.com
+auth0_client_id: LZW4vchTZBfQhYpXplZB5TtNXgyRSVfm
+
+sentry_dsn_frontend: ""
+sentry_dsn_backend: ""
+sentry_environment: development
+
+homepage_url: ""
+
+# Strato assigns it without announcing it.
+ipv6_address: 2a01:239:4c2:7000::1
+
+# The development instance is for the team only.
+basic_auth_user: cgl
+
+# The first admin, at its first sign-in while the instance has none.
+admin_email: florian.metzger@gmail.com
+
+backup_ssh_host: ""
+backup_ssh_port: 22
+backup_ssh_user: ""
+backup_path: /backups
+backup_retain: 30
+backup_hour: 3
